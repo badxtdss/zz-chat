@@ -133,15 +133,39 @@ function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36
 async function init() {
   const p = new URLSearchParams(location.search);
   const bridge = p.get('bridge');
-  myId = localStorage.getItem('zz_id');
-  if (bridge && /^\d+$/.test(bridge)) { myId = bridge; localStorage.setItem('zz_id', myId); history.replaceState(null, '', location.pathname); }
-  if (!myId) { myId = String(Math.floor(Math.random()*990)+10); localStorage.setItem('zz_id', myId); }
+
+  // 1. URL 有 bridge 参数 → 用它
+  if (bridge && /^\d+$/.test(bridge)) {
+    myId = bridge;
+    localStorage.setItem('zz_id', myId);
+    history.replaceState(null, '', location.pathname);
+  }
+
+  // 2. localStorage 有旧编号 → 用它
+  if (!myId) myId = localStorage.getItem('zz_id');
+
+  // 3. 都没有 → 问用户有没有，没有就注册新的
+  if (!myId) {
+    const existing = prompt('已有爪爪编号？\n\n输入编号继续使用，或点"取消"注册新号。');
+    if (existing && /^\d+$/.test(existing)) {
+      myId = existing;
+    } else {
+      try {
+        const resp = await fetch(API + 'register');
+        const data = await resp.json();
+        myId = data.id;
+      } catch {
+        myId = String(Math.floor(Math.random() * 900) + 100);
+      }
+    }
+    localStorage.setItem('zz_id', myId);
+  }
+
   $('myBadge').textContent = `我的编号 ${myId}`;
   friends = JSON.parse(localStorage.getItem('zz_friends')||'[]');
   localMsgs = JSON.parse(localStorage.getItem('zz_local')||'{}');
   renderFriends();
   genQR();
-  // ★ 开始轮询好友请求
   startPolling();
 }
 

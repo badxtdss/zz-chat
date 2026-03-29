@@ -68,7 +68,7 @@ async function handleChat(request, env) {
 // ─── 清理（每天跑一次）────────────────────────────────
 async function handleCleanup(env) {
   const now = Date.now();
-  const cursor = undefined;
+  let cursor;
   let deleted = 0;
   let checked = 0;
   let listed;

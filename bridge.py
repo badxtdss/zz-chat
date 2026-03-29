@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """爪爪桥接 v15 — WebSocket + openclaw agent CLI 直连"""
-import asyncio, json, os, subprocess, time, websockets
+import asyncio, json, os, subprocess, time
+
+# 先清除 SOCKS 代理，再 import websockets
+os.environ.pop('all_proxy', None)
+os.environ.pop('ALL_PROXY', None)
+
+import websockets
 
 API = os.environ.get("ZZ_API", "https://ai0000.cn/zz/")
 
@@ -92,7 +98,7 @@ async def main():
 
     while True:
         try:
-            async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
+            async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10, proxy=None) as ws:
                 print(f"[已连接] {WS_URL}", flush=True)
                 async for raw in ws:
                     try:

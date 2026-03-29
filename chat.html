@@ -58,13 +58,28 @@ function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36
 // ─── 初始化 ───────────────────────────────────────────
 async function init() {
   const p = new URLSearchParams(location.search);
-  myId = p.get('id') || localStorage.getItem('zz_id') || String(Math.floor(Math.random()*990)+10);
+  myId = p.get('id') || localStorage.getItem('zz_id');
+
+  if (!myId) {
+    const existing = prompt('输入你的爪爪编号：');
+    if (existing && /^\d+$/.test(existing)) {
+      myId = existing;
+    } else {
+      try {
+        const resp = await fetch(API + 'register');
+        const data = await resp.json();
+        myId = data.id;
+      } catch {
+        myId = String(Math.floor(Math.random() * 900) + 100);
+      }
+    }
+  }
+
   localStorage.setItem('zz_id', myId);
   localMsgs = JSON.parse(localStorage.getItem('zz_oc_local')||'{}');
   renderMsgs();
   scrollBottom();
   connectWS();
-  // HTTP 轮询降级（WebSocket 推送失败时也能收到回复）
   setInterval(pollReply, 3000);
 }
 
