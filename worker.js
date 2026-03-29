@@ -1,5 +1,5 @@
-// Cloudflare Worker — 爪爪 v6
-// 多 bridge 路由 + 好友请求 + 信令 + 聊天降级
+// Cloudflare Worker — 爪爪 v7
+// 编号自增 + 自动清理 + 多 bridge 路由 + 好友请求 + 信令 + 聊天降级
 // 部署: wrangler deploy
 
 const CORS = {
@@ -7,6 +7,18 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 };
+const HOUR = 3600000;
+const DAY = 86400000;
+
+// ─── 注册（编号自增）─────────────────────────────────
+async function handleRegister(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405, headers: CORS });
+
+  const id = env.CHAT_ROOM.idFromName('openclaw');
+  const room = env.CHAT_ROOM.get(id);
+  return room.fetch(new Request('https://internal/register', { method: 'GET' }));
+}
 
 // ─── 好友请求 ─────────────────────────────────────────
 async function handleFriend(request, env) {
@@ -53,43 +65,96 @@ async function handleChat(request, env) {
   return new Response('Method not allowed', { status: 405, headers: CORS });
 }
 
+// ─── 清理（每天跑一次）────────────────────────────────
+async function handleCleanup(env) {
+  const now = Date.now();
+  const cursor = undefined;
+  let deleted = 0;
+  let checked = 0;
+  let listed;
+  do {
+    listed = await env.ZZ_STORE.list({ prefix: 'user_', cursor });
+    for (const key of listed.keys) {
+      checked++;
+      try {
+        const user = JSON.parse(await env.ZZ_STORE.get(key.name));
+        const uid = key.name.replace('user_', '');
+        let shouldDelete = false;
+        if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true; // 1h未发消息
+        if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true; // 24h不活跃
+        if (shouldDelete) {
+          await env.ZZ_STORE.delete(key.name);
+          await env.ZZ_STORE.delete(`friend_${uid}`);
+          await env.ZZ_STORE.delete(`signal_${uid}`);
+          await env.ZZ_STORE.delete(`chat_${uid}`);
+          deleted++;
+        }
+      } catch {}
+    }
+    cursor = listed.cursor;
+  } while (!listed.list_complete);
+  return { checked, deleted };
+}
+
 // ─── OpenClaw Durable Object ──────────────────────────
 export class ChatRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.bridges = {};    // { "D628": ws, "D47": ws, ... }
-    this.phones = {};     // { "628": ws, "47": ws, ... }
-    this.pendingMsg = {}; // { "628": {...}, "47": {...} } 最近消息
+    this.bridges = {};
+    this.phones = {};
+    this.pendingMsg = {};
   }
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // 注册端点（编号自增）
+    if (url.pathname === '/register') {
+      const nextId = (await this.state.storage.get('counter') || 0) + 1;
+      await this.state.storage.put('counter', nextId);
+      const uid = String(nextId);
+      await this.env.ZZ_STORE.put(`user_${uid}`, JSON.stringify({ created: Date.now(), lastActive: 0 }));
+      return new Response(JSON.stringify({ id: uid }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
+    // 清理端点（cron 调用）
+    if (url.pathname === '/cleanup') {
+      const result = await handleCleanup(this.env);
+      return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
     if (request.headers.get('Upgrade') === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
       await this.handleSession(server, url.searchParams);
       return new Response(null, { status: 101, webSocket: client });
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
-    // REST：获取指定用户的最新消息
+
+    // 更新活跃时间
     const uid = url.searchParams.get('uid');
+    if (uid) await touchUser(this.env, uid);
+
     if (request.method === 'GET') {
       if (uid && this.pendingMsg[uid]) {
         return new Response(JSON.stringify(this.pendingMsg[uid]), { headers: { ...CORS, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ from:'', to:'', content:'', msg_id:'', ts:0, isImage:false }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
-    // REST：发送消息（手机或 bridge 用）
+
     if (request.method === 'PUT') {
       const body = await request.json();
       const to = body.to;
       if (to) this.pendingMsg[to] = body;
-      // 消息发给目标用户的 bridge
+      // 更新活跃时间
+      if (body.from) await touchUser(this.env, body.from);
+      if (to) await touchUser(this.env, to);
+      // 消息发给目标 bridge
       const targetBridge = this.bridges['D' + to];
       if (targetBridge && body.content) {
         try { targetBridge.send(JSON.stringify(body)); } catch {}
       }
-      // bridge 的回复推给目标手机
+      // bridge 回复推给手机
       if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(body)); } catch {}
       return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
@@ -99,21 +164,17 @@ export class ChatRoom {
   handleSession(ws, params) {
     ws.accept();
     const role = params.get('role');
-    const uid = params.get('uid'); // 用户编号，如 "628", "47"
+    const uid = params.get('uid');
 
     if (role === 'bridge') {
-      // bridge 注册：带 ?role=bridge&uid=628
       const bridgeKey = 'D' + (uid || '0');
       this.bridges[bridgeKey] = ws;
-      console.log(`[bridge] 注册: ${bridgeKey}`);
-    } else {
-      // phone 注册：带 ?role=phone&uid=628
-      if (uid) {
-        this.phones[uid] = ws;
-        // 推送最近的待处理消息
-        if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
-          try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
-        }
+      if (uid) touchUser(this.env, uid);
+    } else if (uid) {
+      this.phones[uid] = ws;
+      touchUser(this.env, uid);
+      if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
+        try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
       }
     }
 
@@ -121,19 +182,16 @@ export class ChatRoom {
       try {
         const data = JSON.parse(e.data);
         if (role === 'bridge') {
-          // bridge 发来的消息 → 推给目标手机
           const to = data.to;
           if (to) this.pendingMsg[to] = data;
           if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(data)); } catch {}
         } else {
-          // 手机发来的消息 → 推给对应 bridge
           const to = data.to || '';
-          // 找到目标用户的 bridge
+          if (data.from) touchUser(this.env, data.from);
           const targetBridge = this.bridges['D' + to];
           if (targetBridge) {
             try { targetBridge.send(JSON.stringify(data)); } catch {}
           } else {
-            // 没有 bridge，尝试发给所有 bridge（OpenClaw 对话模式）
             for (const bKey of Object.keys(this.bridges)) {
               try { this.bridges[bKey].send(JSON.stringify(data)); } catch {}
             }
@@ -143,34 +201,46 @@ export class ChatRoom {
     });
 
     ws.addEventListener('close', () => {
-      if (role === 'bridge') {
-        const bridgeKey = 'D' + (uid || '0');
-        delete this.bridges[bridgeKey];
-      } else if (uid) {
-        delete this.phones[uid];
-      }
+      if (role === 'bridge') { delete this.bridges['D' + (uid || '0')]; }
+      else if (uid) { delete this.phones[uid]; }
     });
-
     ws.addEventListener('error', () => {
-      if (role === 'bridge') {
-        const bridgeKey = 'D' + (uid || '0');
-        delete this.bridges[bridgeKey];
-      } else if (uid) {
-        delete this.phones[uid];
-      }
+      if (role === 'bridge') { delete this.bridges['D' + (uid || '0')]; }
+      else if (uid) { delete this.phones[uid]; }
     });
   }
+}
+
+// 更新用户活跃时间
+async function touchUser(env, uid) {
+  if (!uid || uid.startsWith('D')) return;
+  try {
+    const raw = await env.ZZ_STORE.get(`user_${uid}`);
+    if (raw) {
+      const user = JSON.parse(raw);
+      if (!user.lastActive) {
+        user.lastActive = Date.now();
+        await env.ZZ_STORE.put(`user_${uid}`, JSON.stringify(user));
+      }
+    }
+  } catch {}
 }
 
 // ─── 入口 ─────────────────────────────────────────────
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname.includes('/register')) return handleRegister(request, env);
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
     if (url.pathname.includes('/chat')) return handleChat(request, env);
     const id = env.CHAT_ROOM.idFromName('openclaw');
     const room = env.CHAT_ROOM.get(id);
     return room.fetch(request);
+  },
+  // Cron trigger：每天清理
+  async scheduled(event, env) {
+    const result = await handleCleanup(env);
+    console.log(`[cleanup] checked=${result.checked} deleted=${result.deleted}`);
   }
 };

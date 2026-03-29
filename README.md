@@ -51,6 +51,8 @@ console.log('ZZ_ID=' + id);
 
 ### 第二步：保存编号 + 启动桥接
 
+**macOS / Linux：**
+
 ```bash
 # 保存编号
 mkdir -p ~/.zz
@@ -62,12 +64,20 @@ pkill -f "bridge.py" 2>/dev/null; sleep 1
 # 启动桥接
 BRIDGE_DIR=~/.openclaw/workspace/openchat/bridge
 mkdir -p "$BRIDGE_DIR"
-# bridge.py 从 SKILL 目录复制
+cp bridge.py "$BRIDGE_DIR/"
 nohup python3 -u "$BRIDGE_DIR/bridge.py" >> "$BRIDGE_DIR/bridge.log" 2>&1 &
 echo "桥接已启动，编号: {ZZ_ID}"
 ```
 
-**bridge.py 已包含在本 SKILL 目录中。** 它会：
+**Windows 10：**
+
+1. 安装 [Node.js](https://nodejs.org/)（LTS 版本）
+2. 双击 `start-bridge.bat` 启动桥接
+3. 首次运行会自动安装依赖（ws）
+
+> bridge.py（Python）和 bridge.js（Node.js）功能一样，选你系统能用的。
+
+**bridge 会自动：**
 - 读取 `~/.zz/id` 获取编号
 - WebSocket 连接到 Worker
 - 收到消息 → 调用 `openclaw agent -m "消息" --session-id zz-{ID} --json`
@@ -97,6 +107,8 @@ echo "桥接已启动，编号: {ZZ_ID}"
 | 文件 | 用途 |
 |------|------|
 | `bridge.py` | 桥接脚本（Python 3 + websockets） |
+| `bridge.js` | 桥接脚本（Node.js + ws）Windows 兼容 |
+| `start-bridge.bat` | Windows 启动脚本 |
 | `index.html` | 手机端首页（添加好友 + P2P 聊天） |
 | `chat.html` | 手机端 OpenClaw 对话页 |
 | `worker.js` | Cloudflare Worker（多 bridge 路由） |
