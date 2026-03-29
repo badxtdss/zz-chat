@@ -120,7 +120,7 @@ const POLL_MS = 2000;
 
 let myId = null;
 let friends = [];       // 已确认的好友列表
-let pending = [];       // 待确认的请求 [{from:"47"}]
+let pending = [];       // 待确认的请求 [{from:"47", ts: 时间戳}]
 let curFriend = null;
 let localMsgs = {};
 const peers = {};
@@ -165,7 +165,10 @@ async function sendFriendReq() {
   const targetId = $('friendInput').value.trim();
   if (!targetId || !/^\d+$/.test(targetId)) return alert('请输入有效编号');
   if (targetId === myId) return alert('不能添加自己');
-  if (friends.includes(targetId)) return alert('已经是好友了');
+  if (friends.includes(targetId)) { alert('已经是好友了'); unhideFriend(targetId); renderFriends(); hideAdd(); return; }
+
+  // 取消隐藏
+  unhideFriend(targetId);
 
   // ★ 发送请求：写入对方信箱
   try {
@@ -205,7 +208,7 @@ async function checkFriendRequests() {
           console.log(`[好友] 与 ${fromId} 互认成功！`);
           connectToPeer(fromId);
         } else {
-          if (!pending.some(p => p.from === fromId)) pending.push({ from: fromId });
+          if (!pending.some(p => p.from === fromId)) pending.push({ from: fromId, ts: Date.now() });
         }
       } catch {}
     }
@@ -248,6 +251,9 @@ async function pollChatMessages() {
 
 // ─── UI ───────────────────────────────────────────────
 function renderPending() {
+  // 10分钟后自动删除
+  const now = Date.now();
+  pending = pending.filter(p => now - p.ts < 10 * 60 * 1000);
   const el = $('pendingList');
   el.innerHTML = '';
   if (pending.length === 0) return;
@@ -281,11 +287,24 @@ function renderFriends() {
 function showAdd() { $('addModal').classList.add('active'); $('friendInput').value = ''; $('friendInput').focus(); }
 function hideAdd() { $('addModal').classList.remove('active'); }
 function delFriend(idx) {
-  if (!confirm('删除此好友？')) return;
-  closePeer(friends[idx]);
+  // 红X = 关闭窗口（隐藏好友），不是删除
+  // 要重新出现，通过添加朋友窗口输入编号
+  const uid = friends[idx];
+  closePeer(uid);
+  // 从列表隐藏（移除localStorage，但不从friends数组删除，因为对方可能还在)
+  const hidden = JSON.parse(localStorage.getItem('zz_hidden') || '[]');
+  if (!hidden.includes(uid)) hidden.push(uid);
+  localStorage.setItem('zz_hidden', JSON.stringify(hidden));
   friends.splice(idx, 1);
   localStorage.setItem('zz_friends', JSON.stringify(friends));
   renderFriends();
+}
+
+// 取消隐藏（重新添加时调用）
+function unhideFriend(uid) {
+  const hidden = JSON.parse(localStorage.getItem('zz_hidden') || '[]');
+  const i = hidden.indexOf(uid);
+  if (i !== -1) { hidden.splice(i, 1); localStorage.setItem('zz_hidden', JSON.stringify(hidden)); }
 }
 
 // ─── 聊天 ─────────────────────────────────────────────
