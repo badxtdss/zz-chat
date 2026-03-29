@@ -112,6 +112,7 @@ async function sendMsg() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        msg_id: genId(),
         from: myId,
         to: 'D0',
         content: text,
@@ -179,28 +180,25 @@ async function sendImg(e) {
 }
 
 // ─── 轮询 ─────────────────────────────────────────────
+let ocSeenIds = JSON.parse(localStorage.getItem('zz_oc_seen') || '[]');
+function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
 function startPoll() {
   pollTimer = setInterval(poll, POLL_MS);
 }
 
 async function poll() {
   try {
-    const r = await fetch(API, { cache: 'no-store' });
+    const r = await fetch(API + '?_=' + Date.now(), { cache: 'no-store' });
     const data = await r.json();
+    const mid = data.msg_id || '';
 
-    if (data && data.to === myId && data.from === 'D0' && data.content) {
-      const now = Date.now();
-
-      // 去重
-      const existing = getMsgs();
-      const isDup = existing.some(m =>
-        m.dir === 'recv' && m.content === data.content && now - m.ts < 10000
-      );
-
-      if (!isDup && (!data.ts || now - data.ts < MSG_TTL)) {
-        addMsg('recv', data.content, data.isImage);
-        renderMsgs();
-      }
+    if (data && data.to === myId && data.from === 'D0' && data.content && mid && !ocSeenIds.includes(mid)) {
+      ocSeenIds.push(mid);
+      if (ocSeenIds.length > 200) ocSeenIds = ocSeenIds.slice(-200);
+      localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
+      addMsg('recv', data.content, data.isImage);
+      renderMsgs();
     }
   } catch(e) {}
 }

@@ -89,7 +89,8 @@ while True:
                 reply = "⏳ 处理中，请稍候..."
             
             print(f"[回] → #{sender}: {reply[:80]}", flush=True)
-            curl_put(API, {"from": MY_ID, "to": sender, "content": reply, "ts": int(time.time() * 1000)})
+            msg_id = "uuid-" + str(int(time.time() * 1000)) + "-" + os.urandom(3).hex()
+            curl_put(API, {"msg_id": msg_id, "from": MY_ID, "to": sender, "content": reply, "ts": int(time.time() * 1000)})
     
     except Exception as e:
         print(f"[错误] {e}", flush=True)

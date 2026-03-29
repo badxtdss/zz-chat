@@ -265,11 +265,13 @@ async function sendMsg() {
   renderMsgs();
 
   // 发送到 API
+  const msgId = genId();
   try {
     await fetch('https://ai0000.cn/zz/', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        msg_id: msgId,
         from: myId,
         to: curFriend,
         content: text,
@@ -320,20 +322,23 @@ async function sendImg(e) {
 
 // ─── 轮询接收消息 ──────────────────────────────────────
 let lastPollTs = parseInt(localStorage.getItem('zz_poll_ts') || '0');
+let seenIds = JSON.parse(localStorage.getItem('zz_seen_ids') || '[]');
+
+function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
 async function pollMsgs() {
   try {
     const resp = await fetch('https://ai0000.cn/zz/?_=' + Date.now());
     const data = await resp.json();
-    if (data.from && data.to === myId && data.content && data.ts > lastPollTs) {
-      lastPollTs = data.ts;
-      localStorage.setItem('zz_poll_ts', String(data.ts));
-      // 去重：检查最近 10 秒内是否已有相同内容
-      const existing = getMsgs(data.from);
-      const isDup = existing.some(m => m.dir === 'recv' && m.content === data.content && Date.now() - m.ts < 10000);
-      if (!isDup) {
-        addMsg(data.from, 'recv', data.content, data.isImage);
-        if (curFriend === data.from) renderMsgs();
-      }
+    const mid = data.msg_id || '';
+    if (data.from && data.to === myId && data.content && mid && !seenIds.includes(mid)) {
+      seenIds.push(mid);
+      if (seenIds.length > 200) seenIds = seenIds.slice(-200);
+      localStorage.setItem('zz_seen_ids', JSON.stringify(seenIds));
+      lastPollTs = data.ts || Date.now();
+      localStorage.setItem('zz_poll_ts', String(lastPollTs));
+      addMsg(data.from, 'recv', data.content, data.isImage);
+      if (curFriend === data.from) renderMsgs();
     }
   } catch(e) {}
   setTimeout(pollMsgs, 2000);
