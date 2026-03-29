@@ -146,7 +146,6 @@ function openOC() {
 // ─── QR码 ─────────────────────────────────────────────
 function genQR() {
   const url = `${location.origin}${location.pathname}?bridge=${myId}`;
-  $('qrUrl').textContent = url;
   const box = $('qrBox');
   box.innerHTML = '';
   const img = new Image();
