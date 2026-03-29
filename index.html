@@ -339,6 +339,12 @@ async function pollMsgs() {
       localStorage.setItem('zz_poll_ts', String(lastPollTs));
       addMsg(data.from, 'recv', data.content, data.isImage);
       if (curFriend === data.from) renderMsgs();
+      // ★ 读完即焚：清空 Worker
+      fetch('https://ai0000.cn/zz/', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg_id: '', from: '', to: '', content: '', ts: 0 })
+      }).catch(()=>{});
     }
   } catch(e) {}
   setTimeout(pollMsgs, 2000);

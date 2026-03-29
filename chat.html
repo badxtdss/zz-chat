@@ -199,6 +199,12 @@ async function poll() {
       localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
       addMsg('recv', data.content, data.isImage);
       renderMsgs();
+      // ★ 读完即焚：清空 Worker
+      fetch(API, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg_id: '', from: '', to: '', content: '', ts: 0 })
+      }).catch(()=>{});
     }
   } catch(e) {}
 }

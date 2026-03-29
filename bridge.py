@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""爪爪桥接 v12 — curl 轮询，文件队列"""
+"""爪爪桥接 v13 — msg_id 去重 + 读完即焚"""
 import json, time, sys, os, subprocess
 
 API = "https://ai0000.cn/zz/"
@@ -10,14 +10,15 @@ OUTBOX = os.path.join(QUEUE_DIR, "outbox.json")
 
 print(f"""
   ┌────────────────────────────────────────┐
-  │  🦞 爪爪桥接 v12                      │
+  │  🦞 爪爪桥接 v13                      │
   │  编号: {MY_ID}                         │
   │  引擎: curl + 文件队列 → OpenClaw      │
+  │  去重: msg_id + 读完即焚               │
   │  等待手机发消息…                       │
   └────────────────────────────────────────┘
 """, flush=True)
 
-last_ts = 0
+last_processed_id = ""
 
 def curl_get(url):
     try:
@@ -37,24 +38,32 @@ def curl_put(url, data):
     except:
         return ""
 
+def gen_msg_id():
+    return "uuid-" + str(int(time.time() * 1000)) + "-" + os.urandom(4).hex()
+
 while True:
     try:
         raw = curl_get(API)
         if not raw:
             time.sleep(2)
             continue
-        
+
         data = json.loads(raw)
-        ts = data.get("ts", 0)
+        msg_id = data.get("msg_id", "")
         to = data.get("to", "")
-        
-        if to == MY_ID and ts > last_ts:
-            last_ts = ts
+
+        # 跳过已处理的消息
+        if msg_id and msg_id == last_processed_id:
+            time.sleep(1)
+            continue
+
+        if to == MY_ID and data.get("content"):
+            last_processed_id = msg_id
             sender = data.get("from", "")
             content = data.get("content", "")
-            
-            print(f"[收] #{sender}: {content[:60]}", flush=True)
-            
+
+            print(f"[收] #{sender}: {content[:60]} (id={msg_id})", flush=True)
+
             # 检查 inbox 是否为空
             try:
                 with open(INBOX) as f:
@@ -64,13 +73,14 @@ while True:
                     continue
             except:
                 pass
-            
+
             # 写入 inbox
             with open(INBOX, "w") as f:
-                json.dump({"from": sender, "content": content, "ts": ts}, f)
-            
+                json.dump({"from": sender, "content": content, "msg_id": msg_id, "ts": data.get("ts", 0)}, f)
+
             # 等待回复（最多 90 秒）
             reply = ""
+            reply_msg_id = ""
             for i in range(90):
                 time.sleep(1)
                 try:
@@ -78,21 +88,23 @@ while True:
                         out = json.load(f)
                     if out.get("to") == sender and out.get("content"):
                         reply = out.get("content", "")
-                        # 清空 outbox
+                        reply_msg_id = out.get("msg_id", gen_msg_id())
+                        # ★ 读完即焚：先清空文件
                         with open(OUTBOX, "w") as f:
-                            json.dump({"to": "", "content": "", "ts": 0}, f)
+                            json.dump({"to": "", "content": "", "msg_id": "", "ts": 0}, f)
                         break
                 except:
                     pass
-            
+
             if not reply:
                 reply = "⏳ 处理中，请稍候..."
-            
-            print(f"[回] → #{sender}: {reply[:80]}", flush=True)
-            msg_id = "uuid-" + str(int(time.time() * 1000)) + "-" + os.urandom(3).hex()
-            curl_put(API, {"msg_id": msg_id, "from": MY_ID, "to": sender, "content": reply, "ts": int(time.time() * 1000)})
-    
+                reply_msg_id = gen_msg_id()
+
+            print(f"[回] → #{sender}: {reply[:80]} (id={reply_msg_id})", flush=True)
+            # 清空文件后再发 PUT
+            curl_put(API, {"msg_id": reply_msg_id, "from": MY_ID, "to": sender, "content": reply, "ts": int(time.time() * 1000)})
+
     except Exception as e:
         print(f"[错误] {e}", flush=True)
-    
+
     time.sleep(1)
