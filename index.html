@@ -347,222 +347,134 @@ async function sendToFriend(uid, msg) {
 }
 
 // ─── WebRTC P2P ───────────────────────────────────────
+// 按编号大小决定谁发起：小号发起，大号等待
 function connectToPeer(uid) {
   if (peers[uid] && peers[uid].connected) return;
   closePeer(uid);
+  if (Number(myId) < Number(uid)) {
+    console.log(`[P2P] 发起方 ${myId} → ${uid}`);
+    createOffer(uid);
+  } else {
+    console.log(`[P2P] 接收方 ${myId} > ${uid}，等 Offer`);
+    pollForIncoming(uid);
+  }
+  updateP2PStatus();
+}
 
+function createOffer(uid) {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   const peer = { pc, dc: null, connected: false, iceCandidates: [] };
   peers[uid] = peer;
-
   pc.onconnectionstatechange = () => {
-    console.log(`[P2P] ${uid} state: ${pc.connectionState}`);
-    if (pc.connectionState === 'connected') {
-      peer.connected = true;
-      renderFriends();
-      updateP2PStatus();
-    } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-      peer.connected = false;
-      renderFriends();
-      updateP2PStatus();
-    }
+    if (pc.connectionState === 'connected') { peer.connected = true; renderFriends(); updateP2PStatus(); }
+    else if (['failed','closed'].includes(pc.connectionState)) { peer.connected = false; renderFriends(); updateP2PStatus(); }
   };
-
-  pc.onicecandidate = async (e) => {
+  pc.onicecandidate = (e) => {
     if (e.candidate) {
       peer.iceCandidates.push(e.candidate.toJSON());
-      // 定时批量发送 ICE 候选
       clearTimeout(peer._iceTimer);
-      peer._iceTimer = setTimeout(async () => {
-        try {
-          await fetch(API + 'signal?uid=' + myId, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'ice',
-              from: myId,
-              to: uid,
-              candidates: peer.iceCandidates,
-              ts: Date.now(),
-            }),
-          });
-        } catch {}
+      peer._iceTimer = setTimeout(() => {
+        fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
+        }).catch(()=>{});
       }, 500);
     }
   };
-
-  // 创建 DataChannel（发起方）
   const dc = pc.createDataChannel('chat');
   peer.dc = dc;
   setupDataChannel(dc, uid);
-
-  // 创建 Offer
   pc.createOffer().then(async (offer) => {
     await pc.setLocalDescription(offer);
-    try {
-      await fetch(API + 'signal?uid=' + myId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'offer',
-          from: myId,
-          to: uid,
-          sdp: offer.sdp,
-          ts: Date.now(),
-        }),
-      });
-      console.log(`[P2P] offer sent to ${uid}`);
-    } catch {}
+    await fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({type:'offer',from:myId,to:uid,sdp:offer.sdp,ts:Date.now()})
+    });
+    console.log(`[P2P] offer → ${uid}`);
   });
-
-  // 轮询对方的 answer + ICE（对方的信令存在对方的 uid 下）
-  pollSignal(uid);
-  updateP2PStatus();
+  pollForAnswer(uid);
 }
 
-// 被动方：收到 Offer 后创建连接
-function acceptOffer(uid, sdp) {
-  if (peers[uid] && peers[uid].connected) return;
-  closePeer(uid);
-
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  const peer = { pc, dc: null, connected: false, iceCandidates: [] };
-  peers[uid] = peer;
-
-  pc.onconnectionstatechange = () => {
-    console.log(`[P2P] ${uid} state: ${pc.connectionState}`);
-    if (pc.connectionState === 'connected') {
-      peer.connected = true;
-      renderFriends();
-      updateP2PStatus();
-    } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-      peer.connected = false;
-      renderFriends();
-      updateP2PStatus();
-    }
-  };
-
-  pc.ondatachannel = (e) => {
-    peer.dc = e.channel;
-    setupDataChannel(e.channel, uid);
-  };
-
-  pc.onicecandidate = async (e) => {
-    if (e.candidate) {
-      peer.iceCandidates.push(e.candidate.toJSON());
-      clearTimeout(peer._iceTimer);
-      peer._iceTimer = setTimeout(async () => {
-        try {
-          await fetch(API + 'signal?uid=' + myId, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: 'ice',
-              from: myId,
-              to: uid,
-              candidates: peer.iceCandidates,
-              ts: Date.now(),
-            }),
-          });
-        } catch {}
-      }, 500);
-    }
-  };
-
-  pc.setRemoteDescription({ type: 'offer', sdp }).then(() => {
-    return pc.createAnswer();
-  }).then(async (answer) => {
-    await pc.setLocalDescription(answer);
-    try {
-      await fetch(API + 'signal?uid=' + myId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'answer',
-          from: myId,
-          to: uid,
-          sdp: answer.sdp,
-          ts: Date.now(),
-        }),
-      });
-      console.log(`[P2P] answer sent to ${uid}`);
-    } catch {}
-  });
-
-  pollSignal(uid);
-  updateP2PStatus();
-}
-
-function setupDataChannel(dc, uid) {
-  dc.onopen = () => {
-    console.log(`[P2P] datachannel open with ${uid}`);
-    peers[uid].connected = true;
-    renderFriends();
-    updateP2PStatus();
-  };
-  dc.onclose = () => {
-    console.log(`[P2P] datachannel closed with ${uid}`);
-    peers[uid].connected = false;
-    renderFriends();
-    updateP2PStatus();
-  };
-  dc.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.content) {
-        const isDup = getMsgs(uid).some(m => m.dir === 'recv' && m.content === data.content && Date.now() - m.ts < 10000);
-        if (!isDup) {
-          addMsg(uid, 'recv', data.content, data.isImage);
-          if (curFriend === uid) renderMsgs();
-        }
-      }
-    } catch {}
-  };
-}
-
-// 轮询信令 — 读取对方存储在 ?uid=对方ID 下的信令
-let signalTimers = {};
-function pollSignal(uid) {
+function pollForIncoming(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
   signalTimers[uid] = setInterval(async () => {
     try {
-      // ★ 关键：读对方的信令（对方把 offer/answer/ice 存在自己的 uid 下）
-      const resp = await fetch(API + 'signal?uid=' + uid);
-      const data = await resp.json();
-      if (!data || !data.type) return;
-
-      const peer = peers[uid];
-      if (!peer) return;
-
-      if (data.type === 'answer' && data.from === uid && peer.pc) {
-        if (peer.pc.signalingState === 'have-local-offer') {
-          await peer.pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
-          console.log(`[P2P] answer received from ${uid}`);
-        }
-      }
-
-      if (data.type === 'offer' && data.from === uid && !peer.connected) {
-        console.log(`[P2P] offer received from ${uid}`);
-        acceptOffer(uid, data.sdp);
-      }
-
-      if (data.type === 'ice' && data.from === uid && data.candidates) {
-        for (const c of data.candidates) {
-          try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
-        }
+      const resp = await fetch(API+'signal?uid='+uid);
+      const d = await resp.json();
+      if (d && d.type === 'offer' && d.from === uid) {
+        console.log(`[P2P] offer ← ${uid}`);
+        clearInterval(signalTimers[uid]); delete signalTimers[uid];
+        acceptOffer(uid, d.sdp);
       }
     } catch {}
   }, 1000);
-
-  // 30 秒后停止轮询
-  setTimeout(() => {
-    if (signalTimers[uid]) {
-      clearInterval(signalTimers[uid]);
-      delete signalTimers[uid];
-    }
-  }, 30000);
+  setTimeout(() => { if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; } }, 60000);
 }
 
+function pollForAnswer(uid) {
+  if (signalTimers[uid]) clearInterval(signalTimers[uid]);
+  signalTimers[uid] = setInterval(async () => {
+    try {
+      const resp = await fetch(API+'signal?uid='+uid);
+      const d = await resp.json();
+      if (!d || !d.type) return;
+      const peer = peers[uid]; if (!peer) return;
+      if (d.type === 'answer' && d.from === uid && peer.pc.signalingState === 'have-local-offer') {
+        await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
+        console.log(`[P2P] answer ← ${uid}`);
+      }
+      if (d.type === 'ice' && d.from === uid && d.candidates) {
+        for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+      }
+    } catch {}
+  }, 1000);
+  setTimeout(() => { if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; } }, 30000);
+}
+
+function acceptOffer(uid, sdp) {
+  if (peers[uid] && peers[uid].connected) return;
+  closePeer(uid);
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const peer = { pc, dc: null, connected: false, iceCandidates: [] };
+  peers[uid] = peer;
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') { peer.connected = true; renderFriends(); updateP2PStatus(); }
+    else if (['failed','closed'].includes(pc.connectionState)) { peer.connected = false; renderFriends(); updateP2PStatus(); }
+  };
+  pc.ondatachannel = (e) => { peer.dc = e.channel; setupDataChannel(e.channel, uid); };
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      peer.iceCandidates.push(e.candidate.toJSON());
+      clearTimeout(peer._iceTimer);
+      peer._iceTimer = setTimeout(() => {
+        fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
+        }).catch(()=>{});
+      }, 500);
+    }
+  };
+  pc.setRemoteDescription({type:'offer',sdp}).then(() => pc.createAnswer()).then(async (answer) => {
+    await pc.setLocalDescription(answer);
+    await fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({type:'answer',from:myId,to:uid,sdp:answer.sdp,ts:Date.now()})
+    });
+    console.log(`[P2P] answer → ${uid}`);
+  });
+}
+
+function setupDataChannel(dc, uid) {
+  dc.onopen = () => { peers[uid].connected = true; renderFriends(); updateP2PStatus(); };
+  dc.onclose = () => { peers[uid].connected = false; renderFriends(); updateP2PStatus(); };
+  dc.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.content && !getMsgs(uid).some(m => m.dir==='recv' && m.content===data.content && Date.now()-m.ts<10000)) {
+        addMsg(uid, 'recv', data.content, data.isImage);
+        if (curFriend === uid) renderMsgs();
+      }
+    } catch {}
+  };
+}
+
+let signalTimers = {};
 function closePeer(uid) {
   if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; }
   if (peers[uid]) {
@@ -571,16 +483,10 @@ function closePeer(uid) {
     delete peers[uid];
   }
 }
-
-// 启动时自动连接所有好友
-function connectAllPeers() {
-  friends.forEach(f => connectToPeer(f));
-}
+function connectAllPeers() { friends.forEach(f => connectToPeer(f)); }
 
 // ─── 启动 ─────────────────────────────────────────────
-init().then(() => {
-  setTimeout(connectAllPeers, 1000);
-});
+init().then(() => { setTimeout(connectAllPeers, 1000); });
 </script>
 </body>
 </html>
