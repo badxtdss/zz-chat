@@ -7,4 +7,15 @@
   └────────────────────────────────────────┘
 
 [已连接] wss://ai0000.cn/zz/?role=bridge
-[回] → #628: 收到你发的截图！是小米官网 SU7 Ultra 的产品页面——赫曼碳陶瓷制动盘、1548匹马力、纽北调校底盘这些卖点。你在看这款车吗？想了解什么我可以帮你查～ (id=reply-)
+[收] #628: WebSocket修复测试 (id=uuid-ws-fix-test)
+[回] → #628: WebSocket修复测试收到，回复正常！一切运行良好 ✅ (id=reply-uuid-ws-fix-test)
+[收] #628: 给我发首李白的诗 (id=uuid-1774787782326-yfof25)
+[回] → #628: 《静夜思》— 李白
+
+床前明月光，疑是地上霜。
+举头望明月，低头思故乡。
+
+——这首诗写的是游子在寂静的月夜思念家乡的心情。月光洒在床前，恍惚间以为是地上的白霜 (id=reply-uuid-1774787782326-yfof25)
+[断开] no close frame received or sent，5秒后重连...
+[已连接] wss://ai0000.cn/zz/?role=bridge
+[断开] no close frame received or sent，5秒后重连...
