@@ -1,3 +1,11 @@
 name = "zz-proxy"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "ai0000.cn/zz/*", zone_name = "ai0000.cn" }
+]
+
+[[kv_namespaces]]
+binding = "ZZ_STORE"
+id = "24d7a12eb1644dcd826d93824e452042"

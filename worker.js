@@ -1,6 +1,6 @@
-// Cloudflare Worker - CORS 代理 + 消息存储
+// Cloudflare Worker - CORS 代理 + KV 存储
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
@@ -11,18 +11,13 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    const url = new URL(request.url);
-    const action = url.searchParams.get('action');
-
-    // 消息存储（内存，重启丢失，适合测试）
-    if (!globalThis.msgStore) {
-      globalThis.msgStore = { from: '', to: '', content: '', ts: 0, isImage: false };
-    }
+    const MSG_KEY = 'zz_messages';
 
     try {
       // GET: 读取消息
       if (request.method === 'GET') {
-        return new Response(JSON.stringify(globalThis.msgStore), {
+        const data = await env.ZZ_STORE.get(MSG_KEY, 'json');
+        return new Response(JSON.stringify(data || { from: '', to: '', content: '', ts: 0, isImage: false }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
@@ -30,7 +25,7 @@ export default {
       // PUT/POST: 写入消息
       if (request.method === 'PUT' || request.method === 'POST') {
         const body = await request.json();
-        globalThis.msgStore = body;
+        await env.ZZ_STORE.put(MSG_KEY, JSON.stringify(body));
         return new Response(JSON.stringify(body), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
