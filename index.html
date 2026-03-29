@@ -347,16 +347,17 @@ async function sendToFriend(uid, msg) {
 }
 
 // ─── WebRTC P2P ───────────────────────────────────────
-// 按编号大小决定谁发起：小号发起，大号等待
+// 规则：存入对方信箱(?uid=对方)，监听自己信箱(?uid=自己)
+// 小号=Impolite(发起者)，大号=Polite(监听者)
 function connectToPeer(uid) {
   if (peers[uid] && peers[uid].connected) return;
   closePeer(uid);
   if (Number(myId) < Number(uid)) {
-    console.log(`[P2P] 发起方 ${myId} → ${uid}`);
+    console.log(`[P2P] Impolite 发起者 ${myId} → ${uid}`);
     createOffer(uid);
   } else {
-    console.log(`[P2P] 接收方 ${myId} > ${uid}，等 Offer`);
-    pollForIncoming(uid);
+    console.log(`[P2P] Polite 监听者 ${myId} > ${uid}`);
+    listenForOffer(uid);
   }
   updateP2PStatus();
 }
@@ -374,7 +375,8 @@ function createOffer(uid) {
       peer.iceCandidates.push(e.candidate.toJSON());
       clearTimeout(peer._iceTimer);
       peer._iceTimer = setTimeout(() => {
-        fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+        // ★ ICE 存入对方信箱
+        fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
         }).catch(()=>{});
       }, 500);
@@ -385,48 +387,32 @@ function createOffer(uid) {
   setupDataChannel(dc, uid);
   pc.createOffer().then(async (offer) => {
     await pc.setLocalDescription(offer);
-    await fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+    // ★ Offer 存入对方信箱
+    await fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({type:'offer',from:myId,to:uid,sdp:offer.sdp,ts:Date.now()})
     });
-    console.log(`[P2P] offer → ${uid}`);
+    console.log(`[P2P] offer → 对方信箱 uid=${uid}`);
   });
-  pollForAnswer(uid);
+  // ★ 监听自己信箱，等 Answer
+  pollMyMailbox(uid);
 }
 
-function pollForIncoming(uid) {
+function listenForOffer(uid) {
+  // Polite peer：监听自己信箱，等 Offer 到来
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
   signalTimers[uid] = setInterval(async () => {
     try {
-      const resp = await fetch(API+'signal?uid='+uid);
+      const resp = await fetch(API+'signal?uid='+myId); // ★ 读自己信箱
       const d = await resp.json();
-      if (d && d.type === 'offer' && d.from === uid) {
-        console.log(`[P2P] offer ← ${uid}`);
+      if (!d || !d.type) return;
+      if (d.type === 'offer' && d.from === uid) {
+        console.log(`[P2P] offer ← 自己信箱 uid=${myId}`);
         clearInterval(signalTimers[uid]); delete signalTimers[uid];
         acceptOffer(uid, d.sdp);
       }
     } catch {}
   }, 1000);
   setTimeout(() => { if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; } }, 60000);
-}
-
-function pollForAnswer(uid) {
-  if (signalTimers[uid]) clearInterval(signalTimers[uid]);
-  signalTimers[uid] = setInterval(async () => {
-    try {
-      const resp = await fetch(API+'signal?uid='+uid);
-      const d = await resp.json();
-      if (!d || !d.type) return;
-      const peer = peers[uid]; if (!peer) return;
-      if (d.type === 'answer' && d.from === uid && peer.pc.signalingState === 'have-local-offer') {
-        await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
-        console.log(`[P2P] answer ← ${uid}`);
-      }
-      if (d.type === 'ice' && d.from === uid && d.candidates) {
-        for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
-      }
-    } catch {}
-  }, 1000);
-  setTimeout(() => { if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; } }, 30000);
 }
 
 function acceptOffer(uid, sdp) {
@@ -445,7 +431,8 @@ function acceptOffer(uid, sdp) {
       peer.iceCandidates.push(e.candidate.toJSON());
       clearTimeout(peer._iceTimer);
       peer._iceTimer = setTimeout(() => {
-        fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+        // ★ ICE 存入对方信箱
+        fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
         }).catch(()=>{});
       }, 500);
@@ -453,11 +440,35 @@ function acceptOffer(uid, sdp) {
   };
   pc.setRemoteDescription({type:'offer',sdp}).then(() => pc.createAnswer()).then(async (answer) => {
     await pc.setLocalDescription(answer);
-    await fetch(API+'signal?uid='+myId, { method:'POST', headers:{'Content-Type':'application/json'},
+    // ★ Answer 存入对方信箱
+    await fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({type:'answer',from:myId,to:uid,sdp:answer.sdp,ts:Date.now()})
     });
-    console.log(`[P2P] answer → ${uid}`);
+    console.log(`[P2P] answer → 对方信箱 uid=${uid}`);
   });
+  // Answer 发出后，继续监听自己信箱收 ICE
+  pollMyMailbox(uid);
+}
+
+// ★ 统一：监听自己信箱，收 Answer / ICE
+function pollMyMailbox(uid) {
+  if (signalTimers[uid]) clearInterval(signalTimers[uid]);
+  signalTimers[uid] = setInterval(async () => {
+    try {
+      const resp = await fetch(API+'signal?uid='+myId); // ★ 读自己信箱
+      const d = await resp.json();
+      if (!d || !d.type) return;
+      const peer = peers[uid]; if (!peer) return;
+      if (d.type === 'answer' && d.from === uid && peer.pc.signalingState === 'have-local-offer') {
+        await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
+        console.log(`[P2P] answer ← 自己信箱`);
+      }
+      if (d.type === 'ice' && d.from === uid && d.candidates) {
+        for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+      }
+    } catch {}
+  }, 1000);
+  setTimeout(() => { if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; } }, 30000);
 }
 
 function setupDataChannel(dc, uid) {

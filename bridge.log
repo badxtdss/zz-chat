@@ -24,3 +24,29 @@
 [已连接] wss://ai0000.cn/zz/?role=bridge
 [断开] no close frame received or sent，5秒后重连...
 [已连接] wss://ai0000.cn/zz/?role=bridge
+[断开] sent 1011 (internal error) keepalive ping timeout; no close frame received，5秒后重连...
+[断开] timed out during opening handshake，5秒后重连...
+[断开] ，5秒后重连...
+Exception in callback Connection.connection_lost()
+handle: <Handle Connection.connection_lost()>
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/events.py", line 94, in _run
+    self._context.run(self._callback, *self._args)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.14/site-packages/websockets/asyncio/connection.py", line 1029, in connection_lost
+    self.recv_messages.close()
+    ^^^^^^^^^^^^^^^^^^
+AttributeError: 'ClientConnection' object has no attribute 'recv_messages'
+[断开] ，5秒后重连...
+Exception in callback Connection.connection_lost()
+handle: <Handle Connection.connection_lost()>
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/events.py", line 94, in _run
+    self._context.run(self._callback, *self._args)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.14/site-packages/websockets/asyncio/connection.py", line 1029, in connection_lost
+    self.recv_messages.close()
+    ^^^^^^^^^^^^^^^^^^
+AttributeError: 'ClientConnection' object has no attribute 'recv_messages'
+[断开] timed out during opening handshake，5秒后重连...
+[已连接] wss://ai0000.cn/zz/?role=bridge
