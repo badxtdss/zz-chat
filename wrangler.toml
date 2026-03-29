@@ -1,6 +1,6 @@
 name = "zz-proxy"
 main = "worker.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"
 
 routes = [
   { pattern = "ai0000.cn/zz/*", zone_name = "ai0000.cn" }
@@ -9,3 +9,11 @@ routes = [
 [[kv_namespaces]]
 binding = "ZZ_STORE"
 id = "24d7a12eb1644dcd826d93824e452042"
+
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom"]

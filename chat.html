@@ -10,6 +10,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .chat-header{padding:12px 16px;background:rgba(15,52,96,.9);display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(79,195,247,.15);backdrop-filter:blur(10px)}
 .chat-header .back{background:none;border:none;color:#4fc3f7;font-size:16px;cursor:pointer}
 .chat-header .title{font-weight:500;flex:1}
+.chat-header .status{width:8px;height:8px;border-radius:50%;background:#e94560}
+.chat-header .status.on{background:#81c784}
 .messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
 .msg{max-width:78%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.5;word-break:break-word}
 .msg.sent{align-self:flex-end;background:linear-gradient(135deg,#1a5276,#2e86c1);color:#e0e0e0;border-bottom-right-radius:4px}
@@ -28,6 +30,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="chat-header">
   <button class="back" onclick="history.back()">← 返回</button>
   <span class="title">🤖 OpenClaw 聊天机器人</span>
+  <span class="status" id="wsStatus"></span>
 </div>
 <div class="messages" id="msgs"></div>
 <div class="chat-input">
@@ -39,34 +42,65 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 <script>
 // ─── 配置 ─────────────────────────────────────────────
-const API = 'https://ai0000.cn/zz/';
-const POLL_MS = 2000;
-const MSG_TTL = 5*60*1000;
+const API = new URLSearchParams(location.search).get('api') || 'https://ai0000.cn/zz/';
+const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + '?role=phone';
+const RECONNECT_MS = 3000;
 
 let myId = null;
-let pollTimer = null;
+let ws = null;
 let localMsgs = {};
+let ocSeenIds = JSON.parse(localStorage.getItem('zz_oc_seen') || '[]');
 
-// ─── 工具 ─────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
 
 // ─── 初始化 ───────────────────────────────────────────
 async function init() {
   const p = new URLSearchParams(location.search);
   myId = p.get('id') || localStorage.getItem('zz_id') || String(Math.floor(Math.random()*990)+10);
   localStorage.setItem('zz_id', myId);
-
   localMsgs = JSON.parse(localStorage.getItem('zz_oc_local')||'{}');
   renderMsgs();
   scrollBottom();
-  startPoll();
+  connectWS();
+}
+
+// ─── WebSocket ────────────────────────────────────────
+function connectWS() {
+  try {
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => {
+      $('wsStatus').className = 'status on';
+      console.log('[WS] connected');
+    };
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const mid = data.msg_id || '';
+        if (data.to === myId && data.from && data.content && mid && !ocSeenIds.includes(mid)) {
+          ocSeenIds.push(mid);
+          if (ocSeenIds.length > 200) ocSeenIds = ocSeenIds.slice(-200);
+          localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
+          addMsg('recv', data.content, data.isImage);
+          renderMsgs();
+        }
+      } catch {}
+    };
+    ws.onclose = () => {
+      $('wsStatus').className = 'status';
+      console.log('[WS] disconnected, reconnecting...');
+      setTimeout(connectWS, RECONNECT_MS);
+    };
+    ws.onerror = () => {
+      ws.close();
+    };
+  } catch {
+    setTimeout(connectWS, RECONNECT_MS);
+  }
 }
 
 // ─── 聊天 ─────────────────────────────────────────────
-function getMsgs() {
-  return localMsgs['oc'] || [];
-}
+function getMsgs() { return localMsgs['oc'] || []; }
 
 function addMsg(dir, content, isImage) {
   if (!localMsgs['oc']) localMsgs['oc'] = [];
@@ -81,11 +115,8 @@ function renderMsgs() {
   getMsgs().forEach(m => {
     const div = document.createElement('div');
     div.className = `msg ${m.dir === 'sent' ? 'sent' : 'recv'}`;
-    if (m.isImage) {
-      div.innerHTML = `<img src="${m.content}" loading="lazy">`;
-    } else {
-      div.textContent = m.content;
-    }
+    if (m.isImage) div.innerHTML = `<img src="${m.content}" loading="lazy">`;
+    else div.textContent = m.content;
     el.appendChild(div);
   });
   scrollBottom();
@@ -102,26 +133,22 @@ async function sendMsg() {
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
-
   addMsg('sent', text);
   renderMsgs();
 
-  // 发送到 OpenClaw（通过桥接）
-  try {
-    const resp = await fetch(API, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        msg_id: genId(),
-        from: myId,
-        to: 'D0',
-        content: text,
-        ts: Date.now()
-      })
-    });
-  } catch(e) {
-    addMsg('recv', '⚠️ 发送失败，请检查网络');
-    renderMsgs();
+  const msg = { msg_id: genId(), from: myId, to: 'D0', content: text, ts: Date.now() };
+
+  // 优先走 WebSocket
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  } else {
+    // 降级走 REST
+    try {
+      await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
+    } catch {
+      addMsg('recv', '⚠️ 发送失败');
+      renderMsgs();
+    }
   }
 }
 
@@ -133,80 +160,24 @@ async function sendImg(e) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const img = new Image();
-
-  await new Promise((resolve, reject) => {
-    img.onload = resolve;
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
+  await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = URL.createObjectURL(file); });
 
   let w = img.width, h = img.height;
   const max = 800;
-  if (w > max || h > max) {
-    if (w > h) { h = h * max / w; w = max; }
-    else { w = w * max / h; h = max; }
-  }
-  canvas.width = w;
-  canvas.height = h;
+  if (w > max || h > max) { if (w > h) { h *= max/w; w=max; } else { w *= max/h; h=max; } }
+  canvas.width = w; canvas.height = h;
   ctx.drawImage(img, 0, 0, w, h);
 
-  let quality = 0.7;
-  let dataUrl;
-  do {
-    dataUrl = canvas.toDataURL('image/jpeg', quality);
-    quality -= 0.1;
-  } while (dataUrl.length > 200000 && quality > 0.1);
+  let quality = 0.7, dataUrl;
+  do { dataUrl = canvas.toDataURL('image/jpeg', quality); quality -= 0.1; } while (dataUrl.length > 200000 && quality > 0.1);
 
   addMsg('sent', dataUrl, true);
   renderMsgs();
 
-  // 发送到 OpenClaw
-  try {
-    const resp = await fetch(API, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: myId,
-        to: 'D0',
-        content: dataUrl,
-        isImage: true,
-        ts: Date.now()
-      })
-    });
-  } catch(e) {
-    addMsg('recv', '⚠️ 图片发送失败');
-    renderMsgs();
-  }
-}
-
-// ─── 轮询 ─────────────────────────────────────────────
-let ocSeenIds = JSON.parse(localStorage.getItem('zz_oc_seen') || '[]');
-function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
-
-function startPoll() {
-  pollTimer = setInterval(poll, POLL_MS);
-}
-
-async function poll() {
-  try {
-    const r = await fetch(API + '?_=' + Date.now(), { cache: 'no-store' });
-    const data = await r.json();
-    const mid = data.msg_id || '';
-
-    if (data && data.to === myId && data.from === 'D0' && data.content && mid && !ocSeenIds.includes(mid)) {
-      ocSeenIds.push(mid);
-      if (ocSeenIds.length > 200) ocSeenIds = ocSeenIds.slice(-200);
-      localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
-      addMsg('recv', data.content, data.isImage);
-      renderMsgs();
-      // ★ 读完即焚：清空 Worker
-      fetch(API, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ msg_id: '', from: '', to: '', content: '', ts: 0 })
-      }).catch(()=>{});
-    }
-  } catch(e) {}
+  const msg = { msg_id: genId(), from: myId, to: 'D0', content: dataUrl, isImage: true, ts: Date.now() };
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  else try { await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) }); }
+  catch { addMsg('recv', '⚠️ 图片发送失败'); renderMsgs(); }
 }
 
 // ─── 启动 ─────────────────────────────────────────────
