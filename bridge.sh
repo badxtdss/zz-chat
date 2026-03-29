@@ -1,13 +1,12 @@
 #!/bin/bash
-# 爪爪桥接 v3 — jsonblob.com
+# 爪爪桥接 v4 — Cloudflare Worker
 DIR="$HOME/.zz"
-BLOB_ID="019d375b-47e5-78a3-b551-d2e52d3aa6e2"
-API="https://jsonblob.com/api/jsonBlob"
+API="https://zz-proxy.badxtdssr.workers.dev"
 MY_ID="D$(cat "$DIR/id" 2>/dev/null || echo 0)"
 
 echo ""
 echo "  ┌────────────────────────────────────────┐"
-echo "  │  🦞 爪爪桥接 v3                       │"
+echo "  │  🦞 爪爪桥接 v4                       │"
 echo "  │  编号: $MY_ID                          │"
 echo "  │  引擎: OpenClaw CLI                    │"
 echo "  │  等待手机发消息…                       │"
@@ -17,7 +16,7 @@ echo ""
 LAST_TS=0
 
 while true; do
-  RESP=$(curl -s --max-time 8 "$API/$BLOB_ID" 2>/dev/null)
+  RESP=$(curl -s --max-time 8 "$API" 2>/dev/null)
 
   # 检查是否有新消息
   TS=$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('ts',0))" 2>/dev/null || echo "0")
@@ -58,7 +57,7 @@ print(f'[回] → #{sender}: {reply[:80]}')
 # 发送回复
 import time
 req = urllib.request.Request(
-    '$API/$BLOB_ID',
+    '$API',
     data=json.dumps({'from': '$MY_ID', 'to': sender, 'content': reply, 'ts': int(time.time()*1000)}).encode(),
     headers={'Content-Type': 'application/json'}
 )
