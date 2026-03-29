@@ -44,7 +44,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 // ─── 配置 ─────────────────────────────────────────────
 const API = new URLSearchParams(location.search).get('api') || 'https://ai0000.cn/zz/';
-const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + '?role=phone';
+const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + '?role=phone&uid=';
 const RECONNECT_MS = 3000;
 
 let myId = null;
@@ -90,7 +90,7 @@ async function pollReply() {
 // ─── WebSocket ────────────────────────────────────────
 function connectWS() {
   try {
-    ws = new WebSocket(WS_URL);
+    ws = new WebSocket(WS_URL + myId);
     ws.onopen = () => {
       $('wsStatus').className = 'status on';
       console.log('[WS] connected');

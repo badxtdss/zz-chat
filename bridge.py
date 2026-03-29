@@ -1,79 +1,92 @@
 #!/usr/bin/env python3
-"""爪爪桥接 v14 — WebSocket 长连接 + 读完即焚"""
-import asyncio, json, os, time, websockets
+"""爪爪桥接 v15 — WebSocket + openclaw agent CLI 直连"""
+import asyncio, json, os, subprocess, time, websockets
 
 API = os.environ.get("ZZ_API", "https://ai0000.cn/zz/")
-MY_ID = "D" + open(os.path.expanduser("~/.zz/id")).read().strip() if os.path.exists(os.path.expanduser("~/.zz/id")) else "D0"
-QUEUE_DIR = os.environ.get("ZZ_QUEUE_DIR", os.path.expanduser("~/.openclaw/workspace/openchat/queue"))
-INBOX = os.path.join(QUEUE_DIR, "inbox.json")
-OUTBOX = os.path.join(QUEUE_DIR, "outbox.json")
 
-# WebSocket URL: 从 REST URL 推导
-WS_URL = API.replace("https://", "wss://").replace("http://", "ws://") + "?role=bridge"
+# 读取用户编号
+ID_FILE = os.path.expanduser("~/.zz/id")
+if os.path.exists(ID_FILE):
+    MY_ID = open(ID_FILE).read().strip()
+else:
+    MY_ID = str(int(time.time()) % 900 + 100)
+    os.makedirs(os.path.dirname(ID_FILE), exist_ok=True)
+    with open(ID_FILE, "w") as f:
+        f.write(MY_ID)
+    print(f"[初始化] 生成编号: {MY_ID}", flush=True)
+
+BRIDGE_ID = "D" + MY_ID
+SESSION_ID = "zz-" + MY_ID
+WS_URL = API.replace("https://", "wss://").replace("http://", "ws://") + f"?role=bridge&uid={MY_ID}"
 
 last_processed_id = ""
 
-def gen_msg_id():
-    return "uuid-" + str(int(time.time() * 1000)) + "-" + os.urandom(4).hex()
 
-async def check_outbox(ws):
-    """检查 outbox，有回复就通过 WebSocket 发送"""
+def call_openclaw(message):
+    """调用 openclaw agent CLI 获取回复"""
     try:
-        with open(OUTBOX) as f:
-            out = json.load(f)
-        if out.get("to") and out.get("content"):
-            reply = out["content"]
-            reply_msg_id = out.get("msg_id", gen_msg_id())
-            to = out["to"]
-            # 读完即焚
-            with open(OUTBOX, "w") as f:
-                json.dump({"to": "", "content": "", "msg_id": "", "ts": 0}, f)
-            # 通过 WebSocket 发送回复
-            msg = {"msg_id": reply_msg_id, "from": MY_ID, "to": to, "content": reply, "ts": int(time.time() * 1000)}
-            await ws.send(json.dumps(msg))
-            print(f"[回] → #{to}: {reply[:80]} (id={reply_msg_id})", flush=True)
-    except Exception:
-        pass
+        result = subprocess.run(
+            ["openclaw", "agent", "-m", message, "--session-id", SESSION_ID, "--json", "--timeout", "120"],
+            capture_output=True, text=True, timeout=130
+        )
+        # 解析 JSON（过滤 stderr 的 plugin 日志）
+        try:
+            # 找到 JSON 开始的位置
+            stdout = result.stdout
+            json_start = stdout.find('{')
+            if json_start < 0:
+                return None
+            data = json.loads(stdout[json_start:])
+            payloads = data.get("result", {}).get("payloads", [])
+            if payloads:
+                return payloads[0].get("text")
+            return None
+        except (json.JSONDecodeError, IndexError, KeyError):
+            return None
+    except subprocess.TimeoutExpired:
+        print("[CLI 超时]", flush=True)
+        return None
+    except Exception as e:
+        print(f"[CLI 异常] {e}", flush=True)
+        return None
+
 
 async def handle_message(data):
-    """处理收到的消息，写入 inbox"""
+    """处理收到的消息，调 CLI 拿回复，发回去"""
     global last_processed_id
     msg_id = data.get("msg_id", "")
     to = data.get("to", "")
     content = data.get("content", "")
 
-    if not to or not content:
+    if not content:
         return
     if msg_id and msg_id == last_processed_id:
         return
-    if to != MY_ID:
+    # 只处理发给自己的消息
+    if to and to != MY_ID and to != BRIDGE_ID:
         return
 
     last_processed_id = msg_id
     sender = data.get("from", "")
-    print(f"[收] #{sender}: {content[:60]} (id={msg_id})", flush=True)
+    print(f"[收] #{sender}: {content[:80]}", flush=True)
 
-    # 检查 inbox 是否为空
-    try:
-        with open(INBOX) as f:
-            inbox = json.load(f)
-        if inbox.get("content"):
-            print(f"[跳过] inbox 未处理", flush=True)
-            return
-    except Exception:
-        pass
+    # 在线程池调 CLI（避免阻塞）
+    reply = await asyncio.get_event_loop().run_in_executor(None, call_openclaw, content)
 
-    # 写入 inbox
-    with open(INBOX, "w") as f:
-        json.dump({"from": sender, "content": content, "msg_id": msg_id, "ts": data.get("ts", 0)}, f)
+    if not reply:
+        print(f"[跳过] CLI 无回复", flush=True)
+        return
+
+    print(f"[回] → #{sender}: {reply[:80]}", flush=True)
+    return {"msg_id": f"reply-{msg_id}", "from": BRIDGE_ID, "to": sender, "content": reply, "ts": int(time.time() * 1000)}
+
 
 async def main():
     print(f"""
   ┌────────────────────────────────────────┐
-  │  🦞 爪爪桥接 v14                      │
-  │  编号: {MY_ID}                         │
-  │  引擎: WebSocket 长连接                │
-  │  去重: msg_id + 读完即焚               │
+  │  🦞 爪爪桥接 v15                      │
+  │  编号: {MY_ID:<10s} (bridge: {BRIDGE_ID})  │
+  │  引擎: WebSocket + openclaw agent      │
   └────────────────────────────────────────┘
 """, flush=True)
 
@@ -81,30 +94,20 @@ async def main():
         try:
             async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
                 print(f"[已连接] {WS_URL}", flush=True)
-
-                # 定时检查 outbox 的任务
-                async def poll_outbox():
-                    while True:
-                        await asyncio.sleep(1)
-                        await check_outbox(ws)
-
-                outbox_task = asyncio.create_task(poll_outbox())
-
-                try:
-                    async for raw in ws:
-                        try:
-                            data = json.loads(raw)
-                            await handle_message(data)
-                        except json.JSONDecodeError:
-                            pass
-                        except Exception as e:
-                            print(f"[处理错误] {e}", flush=True)
-                finally:
-                    outbox_task.cancel()
-
+                async for raw in ws:
+                    try:
+                        data = json.loads(raw)
+                        reply_msg = await handle_message(data)
+                        if reply_msg:
+                            await ws.send(json.dumps(reply_msg))
+                    except json.JSONDecodeError:
+                        pass
+                    except Exception as e:
+                        print(f"[处理错误] {e}", flush=True)
         except Exception as e:
             print(f"[断开] {e}，5秒后重连...", flush=True)
             await asyncio.sleep(5)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
