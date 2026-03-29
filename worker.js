@@ -179,11 +179,11 @@ export default {
     const url = new URL(request.url);
 
     // 信令路由
-    if (url.pathname.startsWith('/signal'))
+    if (url.pathname.includes('/signal'))
       return handleSignaling(request, env);
 
     // 好友消息路由
-    if (url.pathname.startsWith('/friend'))
+    if (url.pathname.includes('/friend'))
       return handleFriend(request, env);
 
     // OpenClaw 对话
