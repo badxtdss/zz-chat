@@ -22,10 +22,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .friend-item .icon{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;margin-right:12px}
 .friend-item .info{flex:1}
 .friend-item .name{font-weight:500}
-.friend-item .p2p-badge{font-size:10px;padding:2px 6px;border-radius:8px;margin-left:6px}
-.friend-item .p2p-badge.on{background:#81c78433;color:#81c784}
-.friend-item .p2p-badge.off{background:#e9456033;color:#e94560}
 .friend-item .del{background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;padding:4px 8px}
+.pending-list{margin-top:12px}
+.pending-item{display:flex;align-items:center;padding:10px 12px;background:#1a1a2e;border-radius:10px;margin-bottom:6px;font-size:13px}
+.pending-item .accept{background:#81c784;color:#000;border:none;padding:4px 12px;border-radius:8px;font-size:12px;cursor:pointer;margin-left:auto}
+.section-title{font-size:12px;color:#8892b0;margin:16px 0 8px;text-transform:uppercase;letter-spacing:1px}
 .qr-section{background:linear-gradient(135deg,#16213e,#0f3460);border-radius:16px;padding:24px;text-align:center;margin:20px 0}
 .qr-section img{border-radius:8px;background:#fff;padding:8px}
 .qr-label{margin-top:12px;font-size:13px;color:#8892b0}
@@ -73,6 +74,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="home">
     <button class="btn btn-oc" onclick="openOC()">🤖 OpenClaw 聊天机器人</button>
     <button class="btn btn-add" onclick="showAdd()">➕ 添加朋友</button>
+    <div class="pending-list" id="pendingList"></div>
+    <div class="section-title">好友</div>
     <div class="friend-list" id="friends"></div>
     <div class="qr-section">
       <div id="qrBox"></div>
@@ -100,10 +103,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div class="modal" id="addModal">
   <div class="modal-box">
     <h3>添加朋友</h3>
-    <input id="friendInput" placeholder="输入对方编号（如 47）" onkeydown="if(event.key==='Enter')addFriend()">
+    <p style="font-size:13px;color:#8892b0;margin-bottom:12px">输入对方编号，发送好友请求。<br>对方也添加你后，自动成为好友。</p>
+    <input id="friendInput" placeholder="输入对方编号（如 47）" onkeydown="if(event.key==='Enter')sendFriendReq()">
     <div class="modal-btns">
       <button class="cancel" onclick="hideAdd()">取消</button>
-      <button class="ok" onclick="addFriend()">添加</button>
+      <button class="ok" onclick="sendFriendReq()">发送请求</button>
     </div>
   </div>
 </div>
@@ -111,18 +115,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 // ─── 配置 ─────────────────────────────────────────────
 const API = new URLSearchParams(location.search).get('api') || 'https://ai0000.cn/zz/';
-const ICE_SERVERS = [
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  { urls: 'stun:stun.l.google.com:19302' },
-];
+const ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
+const POLL_MS = 2000;
 
 let myId = null;
-let friends = [];
+let friends = [];       // 已确认的好友列表
+let pending = [];       // 待确认的请求 [{from:"47"}]
 let curFriend = null;
 let localMsgs = {};
-
-// WebRTC 状态
-const peers = {};  // { uid: { pc, dc, connected } }
+const peers = {};
+let signalTimers = {};
+let pollTimer = null;
 
 const $ = id => document.getElementById(id);
 function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
@@ -132,47 +135,109 @@ async function init() {
   const p = new URLSearchParams(location.search);
   const bridge = p.get('bridge');
   myId = localStorage.getItem('zz_id');
-  if (bridge && /^\d+$/.test(bridge)) {
-    myId = bridge;
-    localStorage.setItem('zz_id', myId);
-    history.replaceState(null, '', location.pathname);
-  }
-  if (!myId) {
-    myId = String(Math.floor(Math.random()*990)+10);
-    localStorage.setItem('zz_id', myId);
-  }
-
+  if (bridge && /^\d+$/.test(bridge)) { myId = bridge; localStorage.setItem('zz_id', myId); history.replaceState(null, '', location.pathname); }
+  if (!myId) { myId = String(Math.floor(Math.random()*990)+10); localStorage.setItem('zz_id', myId); }
   $('myBadge').textContent = `我的编号 ${myId}`;
   friends = JSON.parse(localStorage.getItem('zz_friends')||'[]');
   localMsgs = JSON.parse(localStorage.getItem('zz_local')||'{}');
   renderFriends();
   genQR();
+  // ★ 开始轮询好友请求
+  startPolling();
 }
 
 // ─── OpenClaw ─────────────────────────────────────────
-function openOC() {
-  window.location.href = 'chat.html?id=' + myId;
-}
+function openOC() { window.location.href = 'chat.html?id=' + myId; }
 
 // ─── QR码 ─────────────────────────────────────────────
 function genQR() {
   const url = `${location.origin}${location.pathname}?bridge=${myId}`;
-  const box = $('qrBox');
-  box.innerHTML = '';
+  const box = $('qrBox'); box.innerHTML = '';
   const img = new Image();
-  img.style.borderRadius = '8px';
-  img.style.background = '#fff';
-  img.style.padding = '8px';
-  img.style.width = '160px';
-  img.style.height = '160px';
+  img.style.cssText = 'border-radius:8px;background:#fff;padding:8px;width:160px;height:160px';
   img.src = `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=160&_=${Date.now()}`;
-  img.onerror = () => {
-    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}&_=${Date.now()}`;
-  };
+  img.onerror = () => { img.src = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(url)}`; };
   box.appendChild(img);
 }
 
-// ─── 好友 ─────────────────────────────────────────────
+// ─── 好友请求（REST）──────────────────────────────────
+async function sendFriendReq() {
+  const targetId = $('friendInput').value.trim();
+  if (!targetId || !/^\d+$/.test(targetId)) return alert('请输入有效编号');
+  if (targetId === myId) return alert('不能添加自己');
+  if (friends.includes(targetId)) return alert('已经是好友了');
+
+  // ★ 发送请求：写入对方信箱
+  try {
+    await fetch(API + 'friend?uid=' + targetId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: myId, to: targetId, ts: Date.now() }),
+    });
+    alert('请求已发送！等对方也添加你后自动成为好友。');
+  } catch { alert('发送失败，请检查网络'); }
+  hideAdd();
+}
+
+// 轮询自己的信箱，检查是否有新请求
+async function checkFriendRequests() {
+  try {
+    const resp = await fetch(API + 'friend?uid=' + myId);
+    const list = await resp.json();
+    if (!Array.isArray(list)) return;
+
+    for (const req of list) {
+      const fromId = req.from;
+      if (!fromId || fromId === myId) continue;
+
+      // 对方已在好友列表 → 跳过
+      if (friends.includes(fromId)) continue;
+
+      // ★ 检查：对方的信箱里也有我的请求 = 双方互加 = 确认好友
+      try {
+        const checkResp = await fetch(API + 'friend?uid=' + fromId);
+        const checkList = await checkResp.json();
+        const mutual = checkList.some(r => r.from === myId);
+        if (mutual) {
+          // 双方确认！成为好友
+          friends.push(fromId);
+          localStorage.setItem('zz_friends', JSON.stringify(friends));
+          console.log(`[好友] 与 ${fromId} 互认成功！`);
+          // 建立 WebRTC
+          connectToPeer(fromId);
+        } else {
+          // 对方还没加我，显示为待确认
+          if (!pending.some(p => p.from === fromId)) {
+            pending.push({ from: fromId });
+          }
+        }
+      } catch {}
+    }
+    renderPending();
+    renderFriends();
+  } catch {}
+}
+
+// ─── 轮询 ─────────────────────────────────────────────
+function startPolling() {
+  checkFriendRequests();
+  pollTimer = setInterval(checkFriendRequests, POLL_MS);
+}
+
+// ─── UI ───────────────────────────────────────────────
+function renderPending() {
+  const el = $('pendingList');
+  el.innerHTML = '';
+  if (pending.length === 0) return;
+  el.innerHTML = '<div class="section-title">待确认</div>';
+  pending.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'pending-item';
+    div.innerHTML = `<span>📱 #${p.from} 想加你为好友</span>`;
+    el.appendChild(div);
+  });
+}
+
 function renderFriends() {
   const el = $('friends');
   el.innerHTML = '';
@@ -183,11 +248,7 @@ function renderFriends() {
     div.className = 'friend-item';
     div.innerHTML = `
       <div class="icon" style="background:${colors[i%colors.length]}20;color:${colors[i%colors.length]}">${f}</div>
-      <div class="info">
-        <div class="name">朋友 #${f}
-          <span class="p2p-badge ${p2p?'on':'off'}">${p2p?'P2P':'离线'}</span>
-        </div>
-      </div>
+      <div class="info"><div class="name">朋友 #${f}${p2p ? ' <span style="color:#81c784;font-size:10px">P2P</span>' : ''}</div></div>
       <button class="del" onclick="event.stopPropagation();delFriend(${i})">✕</button>
     `;
     div.onclick = () => openChat(f);
@@ -195,30 +256,11 @@ function renderFriends() {
   });
 }
 
-function showAdd() {
-  $('addModal').classList.add('active');
-  $('friendInput').value = '';
-  $('friendInput').focus();
-}
+function showAdd() { $('addModal').classList.add('active'); $('friendInput').value = ''; $('friendInput').focus(); }
 function hideAdd() { $('addModal').classList.remove('active'); }
-
-function addFriend() {
-  const id = $('friendInput').value.trim();
-  if (!id || !/^\d+$/.test(id)) return alert('请输入有效编号');
-  if (id === myId) return alert('不能添加自己');
-  if (friends.includes(id)) return alert('已在列表中');
-  friends.push(id);
-  localStorage.setItem('zz_friends', JSON.stringify(friends));
-  renderFriends();
-  hideAdd();
-  // 尝试建立 P2P 连接
-  connectToPeer(id);
-}
-
 function delFriend(idx) {
   if (!confirm('删除此好友？')) return;
-  const uid = friends[idx];
-  closePeer(uid);
+  closePeer(friends[idx]);
   friends.splice(idx, 1);
   localStorage.setItem('zz_friends', JSON.stringify(friends));
   renderFriends();
@@ -234,30 +276,19 @@ function openChat(fid) {
   renderMsgs();
   scrollBottom();
   $('msgInput').focus();
-  // 确保 P2P 连接
   if (!peers[fid] || !peers[fid].connected) connectToPeer(fid);
 }
-
-function backHome() {
-  curFriend = null;
-  $('chatView').classList.remove('active');
-  $('homeView').style.display = '';
-  renderFriends();
-}
-
+function backHome() { curFriend = null; $('chatView').classList.remove('active'); $('homeView').style.display = ''; renderFriends(); }
 function getMsgs(fid) { return localMsgs[fid] || []; }
-
 function addMsg(fid, dir, content, isImage) {
   if (!localMsgs[fid]) localMsgs[fid] = [];
   localMsgs[fid].push({ dir, content, isImage, ts: Date.now() });
   if (localMsgs[fid].length > 500) localMsgs[fid] = localMsgs[fid].slice(-500);
   localStorage.setItem('zz_local', JSON.stringify(localMsgs));
 }
-
 function renderMsgs() {
   if (!curFriend) return;
-  const el = $('msgs');
-  el.innerHTML = '';
+  const el = $('msgs'); el.innerHTML = '';
   getMsgs(curFriend).forEach(m => {
     const div = document.createElement('div');
     div.className = `msg ${m.dir === 'sent' ? 'sent' : 'recv'}`;
@@ -267,26 +298,14 @@ function renderMsgs() {
   });
   scrollBottom();
 }
-
-function scrollBottom() {
-  const el = $('msgs');
-  el.scrollTop = el.scrollHeight;
-}
+function scrollBottom() { const el = $('msgs'); el.scrollTop = el.scrollHeight; }
 
 function updateP2PStatus() {
   if (!curFriend) return;
   const el = $('p2pStatus');
   const p = peers[curFriend];
-  if (p && p.connected) {
-    el.textContent = 'P2P 已连接';
-    el.className = 'p2p-status on';
-  } else if (p && p.pc && p.pc.connectionState === 'connecting') {
-    el.textContent = '连接中…';
-    el.className = 'p2p-status connecting';
-  } else {
-    el.textContent = '未连接';
-    el.className = 'p2p-status off';
-  }
+  if (p && p.connected) { el.textContent = 'P2P 已连接'; el.className = 'p2p-status on'; }
+  else { el.textContent = '未连接'; el.className = 'p2p-status off'; }
 }
 
 // ─── 发送 ─────────────────────────────────────────────
@@ -295,60 +314,38 @@ async function sendMsg() {
   const text = input.value.trim();
   if (!text || !curFriend) return;
   input.value = '';
-  addMsg(curFriend, 'sent', text);
-  renderMsgs();
-
+  addMsg(curFriend, 'sent', text); renderMsgs();
   const msg = { msg_id: genId(), from: myId, to: curFriend, content: text, ts: Date.now() };
   await sendToFriend(curFriend, msg);
 }
 
 async function sendImg(e) {
-  const file = e.target.files[0];
-  if (!file || !curFriend) return;
-  e.target.value = '';
-
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  const img = new Image();
+  const file = e.target.files[0]; if (!file || !curFriend) return; e.target.value = '';
+  const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d'), img = new Image();
   await new Promise((r,j) => { img.onload=r; img.onerror=j; img.src=URL.createObjectURL(file); });
   let w=img.width, h=img.height; const max=800;
   if(w>max||h>max){if(w>h){h*=max/w;w=max}else{w*=max/h;h=max}}
-  canvas.width=w; canvas.height=h;
-  ctx.drawImage(img,0,0,w,h);
-  let q=0.7, dataUrl;
-  do{dataUrl=canvas.toDataURL('image/jpeg',q);q-=.1}while(dataUrl.length>200000&&q>.1);
-
-  addMsg(curFriend, 'sent', dataUrl, true);
-  renderMsgs();
-
-  const msg = { msg_id: genId(), from: myId, to: curFriend, content: dataUrl, isImage: true, ts: Date.now() };
+  canvas.width=w; canvas.height=h; ctx.drawImage(img,0,0,w,h);
+  let q=0.7, dataUrl; do{dataUrl=canvas.toDataURL('image/jpeg',q);q-=.1}while(dataUrl.length>200000&&q>.1);
+  addMsg(curFriend,'sent',dataUrl,true); renderMsgs();
+  const msg = { msg_id:genId(), from:myId, to:curFriend, content:dataUrl, isImage:true, ts:Date.now() };
   await sendToFriend(curFriend, msg);
 }
 
 async function sendToFriend(uid, msg) {
-  // 优先走 P2P DataChannel
   if (peers[uid] && peers[uid].connected && peers[uid].dc) {
-    try {
-      peers[uid].dc.send(JSON.stringify(msg));
-      return;
-    } catch {}
+    try { peers[uid].dc.send(JSON.stringify(msg)); return; } catch {}
   }
-  // 降级走 Worker REST
+  // P2P 不通就走 Worker REST 降级
   try {
     await fetch(API + 'friend?uid=' + uid, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
     });
-  } catch {
-    addMsg(uid, 'recv', '⚠️ 发送失败');
-    if (curFriend === uid) renderMsgs();
-  }
+  } catch { addMsg(uid, 'recv', '⚠️ 发送失败'); if (curFriend === uid) renderMsgs(); }
 }
 
 // ─── WebRTC P2P ───────────────────────────────────────
-// 规则：存入对方信箱(?uid=对方)，监听自己信箱(?uid=自己)
-// 小号=Impolite(发起者)，大号=Polite(监听者)
 function connectToPeer(uid) {
   if (peers[uid] && peers[uid].connected) return;
   closePeer(uid);
@@ -375,7 +372,6 @@ function createOffer(uid) {
       peer.iceCandidates.push(e.candidate.toJSON());
       clearTimeout(peer._iceTimer);
       peer._iceTimer = setTimeout(() => {
-        // ★ ICE 存入对方信箱
         fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
         }).catch(()=>{});
@@ -387,26 +383,22 @@ function createOffer(uid) {
   setupDataChannel(dc, uid);
   pc.createOffer().then(async (offer) => {
     await pc.setLocalDescription(offer);
-    // ★ Offer 存入对方信箱
     await fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({type:'offer',from:myId,to:uid,sdp:offer.sdp,ts:Date.now()})
     });
-    console.log(`[P2P] offer → 对方信箱 uid=${uid}`);
+    console.log(`[P2P] offer → uid=${uid}`);
   });
-  // ★ 监听自己信箱，等 Answer
   pollMyMailbox(uid);
 }
 
 function listenForOffer(uid) {
-  // Polite peer：监听自己信箱，等 Offer 到来
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
   signalTimers[uid] = setInterval(async () => {
     try {
-      const resp = await fetch(API+'signal?uid='+myId); // ★ 读自己信箱
+      const resp = await fetch(API+'signal?uid='+myId);
       const d = await resp.json();
-      if (!d || !d.type) return;
-      if (d.type === 'offer' && d.from === uid) {
-        console.log(`[P2P] offer ← 自己信箱 uid=${myId}`);
+      if (d && d.type === 'offer' && d.from === uid) {
+        console.log(`[P2P] offer ← uid=${myId}`);
         clearInterval(signalTimers[uid]); delete signalTimers[uid];
         acceptOffer(uid, d.sdp);
       }
@@ -431,7 +423,6 @@ function acceptOffer(uid, sdp) {
       peer.iceCandidates.push(e.candidate.toJSON());
       clearTimeout(peer._iceTimer);
       peer._iceTimer = setTimeout(() => {
-        // ★ ICE 存入对方信箱
         fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({type:'ice',from:myId,to:uid,candidates:peer.iceCandidates,ts:Date.now()})
         }).catch(()=>{});
@@ -440,28 +431,25 @@ function acceptOffer(uid, sdp) {
   };
   pc.setRemoteDescription({type:'offer',sdp}).then(() => pc.createAnswer()).then(async (answer) => {
     await pc.setLocalDescription(answer);
-    // ★ Answer 存入对方信箱
     await fetch(API+'signal?uid='+uid, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({type:'answer',from:myId,to:uid,sdp:answer.sdp,ts:Date.now()})
     });
-    console.log(`[P2P] answer → 对方信箱 uid=${uid}`);
+    console.log(`[P2P] answer → uid=${uid}`);
   });
-  // Answer 发出后，继续监听自己信箱收 ICE
   pollMyMailbox(uid);
 }
 
-// ★ 统一：监听自己信箱，收 Answer / ICE
 function pollMyMailbox(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
   signalTimers[uid] = setInterval(async () => {
     try {
-      const resp = await fetch(API+'signal?uid='+myId); // ★ 读自己信箱
+      const resp = await fetch(API+'signal?uid='+myId);
       const d = await resp.json();
       if (!d || !d.type) return;
       const peer = peers[uid]; if (!peer) return;
       if (d.type === 'answer' && d.from === uid && peer.pc.signalingState === 'have-local-offer') {
         await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
-        console.log(`[P2P] answer ← 自己信箱`);
+        console.log(`[P2P] answer ← uid=${myId}`);
       }
       if (d.type === 'ice' && d.from === uid && d.candidates) {
         for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
@@ -485,7 +473,6 @@ function setupDataChannel(dc, uid) {
   };
 }
 
-let signalTimers = {};
 function closePeer(uid) {
   if (signalTimers[uid]) { clearInterval(signalTimers[uid]); delete signalTimers[uid]; }
   if (peers[uid]) {
@@ -494,10 +481,9 @@ function closePeer(uid) {
     delete peers[uid];
   }
 }
-function connectAllPeers() { friends.forEach(f => connectToPeer(f)); }
 
 // ─── 启动 ─────────────────────────────────────────────
-init().then(() => { setTimeout(connectAllPeers, 1000); });
+init();
 </script>
 </body>
 </html>
