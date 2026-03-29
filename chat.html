@@ -158,7 +158,7 @@ async function sendMsg() {
   addMsg('sent', text);
   renderMsgs();
 
-  const msg = { msg_id: genId(), from: myId, to: 'D0', content: text, ts: Date.now() };
+  const msg = { msg_id: genId(), from: myId, to: myId, content: text, ts: Date.now() };
 
   // 优先走 WebSocket
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -196,7 +196,7 @@ async function sendImg(e) {
   addMsg('sent', dataUrl, true);
   renderMsgs();
 
-  const msg = { msg_id: genId(), from: myId, to: 'D0', content: dataUrl, isImage: true, ts: Date.now() };
+  const msg = { msg_id: genId(), from: myId, to: myId, content: dataUrl, isImage: true, ts: Date.now() };
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   else try { await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) }); }
   catch { addMsg('recv', '⚠️ 图片发送失败'); renderMsgs(); }
