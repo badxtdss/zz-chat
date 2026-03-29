@@ -83,3 +83,12 @@ AttributeError: 'ClientConnection' object has no attribute 'recv_messages'
 [回] → #628: 明白，你说的是爪爪的手机端。你想了解什么呢？是手机端遇到了什么问题，还是有什么功能想问的？具体说说，我帮你看看。 (id=reply-uuid-1774799445877-dcndrb)
 [收] #628: 上面已经丢了两次回复了。检查怎么回事 (id=uuid-1774799530748-6lgy3k)
 [断开] no close frame received or sent，5秒后重连...
+[已连接] wss://ai0000.cn/zz/?role=bridge
+[回] → #628: 排查完毕，找到原因了：
+
+1️⃣ **消息覆盖问题**：WebSocket 桥接收到新消息时直接写入 inbox.json，如果上一条还没被 cron 处理，新 (id=reply-uuid-1774799530748-6lgy3k)
+[收] #628: 别改，但是告诉我WebSocket 频繁断连的原因，和每次断多久多长时间和频率 (id=uuid-1774800117319-pog4ey)
+[回] → #628: WebSocket 频繁断连的常见原因：
+
+1️⃣ 服务端原因
+• 心跳超时：服务端设了 ping/pong 超时（常见 30s-120s），客户端没及时回复  (id=reply-uuid-1774800117319-pog4ey)
