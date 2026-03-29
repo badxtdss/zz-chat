@@ -186,30 +186,26 @@ async function checkFriendRequests() {
     const list = await resp.json();
     if (!Array.isArray(list)) return;
 
-    for (const req of list) {
-      const fromId = req.from;
-      if (!fromId || fromId === myId) continue;
+    // ★ 只看好友请求：有 from，没有 msg_id，没有 content
+    const requests = list.filter(r => r.from && !r.msg_id && !r.content);
 
-      // 对方已在好友列表 → 跳过
+    for (const req of requests) {
+      const fromId = req.from;
+      if (fromId === myId) continue;
       if (friends.includes(fromId)) continue;
 
-      // ★ 检查：对方的信箱里也有我的请求 = 双方互加 = 确认好友
+      // 检查对方信箱里有没有我的请求（互认）
       try {
         const checkResp = await fetch(API + 'friend?uid=' + fromId);
         const checkList = await checkResp.json();
-        const mutual = checkList.some(r => r.from === myId);
+        const mutual = Array.isArray(checkList) && checkList.some(r => r.from === myId && !r.msg_id && !r.content);
         if (mutual) {
-          // 双方确认！成为好友
           friends.push(fromId);
           localStorage.setItem('zz_friends', JSON.stringify(friends));
           console.log(`[好友] 与 ${fromId} 互认成功！`);
-          // 建立 WebRTC
           connectToPeer(fromId);
         } else {
-          // 对方还没加我，显示为待确认
-          if (!pending.some(p => p.from === fromId)) {
-            pending.push({ from: fromId });
-          }
+          if (!pending.some(p => p.from === fromId)) pending.push({ from: fromId });
         }
       } catch {}
     }
@@ -219,9 +215,35 @@ async function checkFriendRequests() {
 }
 
 // ─── 轮询 ─────────────────────────────────────────────
+let lastChatTs = {};
 function startPolling() {
   checkFriendRequests();
-  pollTimer = setInterval(checkFriendRequests, POLL_MS);
+  pollTimer = setInterval(() => {
+    checkFriendRequests();
+    pollChatMessages();
+  }, POLL_MS);
+}
+
+// 轮询降级聊天消息（P2P 不通时）
+async function pollChatMessages() {
+  for (const fid of friends) {
+    if (peers[fid] && peers[fid].connected) continue; // P2P 通了就不轮询
+    try {
+      const resp = await fetch(API + 'chat?uid=' + myId);
+      const list = await resp.json();
+      if (!Array.isArray(list)) continue;
+      for (const msg of list) {
+        if (msg.from !== fid || !msg.content) continue;
+        if (msg.ts <= (lastChatTs[fid] || 0)) continue;
+        lastChatTs[fid] = msg.ts;
+        const isDup = getMsgs(fid).some(m => m.dir === 'recv' && m.content === msg.content && Date.now() - m.ts < 10000);
+        if (!isDup) {
+          addMsg(fid, 'recv', msg.content, msg.isImage);
+          if (curFriend === fid) renderMsgs();
+        }
+      }
+    } catch {}
+  }
 }
 
 // ─── UI ───────────────────────────────────────────────
@@ -336,9 +358,9 @@ async function sendToFriend(uid, msg) {
   if (peers[uid] && peers[uid].connected && peers[uid].dc) {
     try { peers[uid].dc.send(JSON.stringify(msg)); return; } catch {}
   }
-  // P2P 不通就走 Worker REST 降级
+  // P2P 不通就走 Worker REST 降级（走 /chat，不污染好友请求信箱）
   try {
-    await fetch(API + 'friend?uid=' + uid, {
+    await fetch(API + 'chat?uid=' + uid, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
     });
@@ -396,11 +418,13 @@ function listenForOffer(uid) {
   signalTimers[uid] = setInterval(async () => {
     try {
       const resp = await fetch(API+'signal?uid='+myId);
-      const d = await resp.json();
-      if (d && d.type === 'offer' && d.from === uid) {
+      const list = await resp.json();
+      if (!Array.isArray(list)) return;
+      const offer = list.find(d => d.type === 'offer' && d.from === uid);
+      if (offer) {
         console.log(`[P2P] offer ← uid=${myId}`);
         clearInterval(signalTimers[uid]); delete signalTimers[uid];
-        acceptOffer(uid, d.sdp);
+        acceptOffer(uid, offer.sdp);
       }
     } catch {}
   }, 1000);
@@ -444,15 +468,19 @@ function pollMyMailbox(uid) {
   signalTimers[uid] = setInterval(async () => {
     try {
       const resp = await fetch(API+'signal?uid='+myId);
-      const d = await resp.json();
-      if (!d || !d.type) return;
+      const list = await resp.json();
+      if (!Array.isArray(list)) return;
       const peer = peers[uid]; if (!peer) return;
-      if (d.type === 'answer' && d.from === uid && peer.pc.signalingState === 'have-local-offer') {
-        await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
-        console.log(`[P2P] answer ← uid=${myId}`);
-      }
-      if (d.type === 'ice' && d.from === uid && d.candidates) {
-        for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+
+      for (const d of list) {
+        if (d.from !== uid) continue;
+        if (d.type === 'answer' && peer.pc.signalingState === 'have-local-offer') {
+          await peer.pc.setRemoteDescription({type:'answer',sdp:d.sdp});
+          console.log(`[P2P] answer ← uid=${myId}`);
+        }
+        if (d.type === 'ice' && d.candidates) {
+          for (const c of d.candidates) try { await peer.pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+        }
       }
     } catch {}
   }, 1000);
