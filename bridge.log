@@ -1,0 +1,93 @@
+
+  ┌────────────────────────────────────────┐
+  │  🦞 爪爪桥接 v13                      │
+  │  编号: D0                         │
+  │  引擎: curl + 文件队列 → OpenClaw      │
+  │  去重: msg_id + 读完即焚               │
+  │  等待手机发消息…                       │
+  └────────────────────────────────────────┘
+
+[收] #628: 去重测试 (id=uuid-test-001)
+[回] → #628: 收到！我在呢，随时等你吩咐 🐾 有什么需要帮忙的吗？ (id=uuid-1774781592025-7c089c14)
+[收] #628: 你是哪个模型 (id=)
+[回] → #628: 收到你的去重测试消息！✅ 这条回复已写入 outbox 队列，可以用于验证消息的去重机制是否正常工作。 (id=reply-uuid-test-001)
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[跳过] inbox 未处理
+[收] #628: 你是哪个模型 (id=)
+[回] → #628: 我当前使用的模型是 openrouter/xiaomi/mimo-v2-pro，也就是小米的 MiMo v2 Pro。有什么我可以帮你的吗？ (id=reply-1774782006448)
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[回] → #628: 我是小米的 MiMo 模型，由小米大模型 Core 团队开发。当前运行的版本是通过 OpenRouter 提供的 mimo-v2-pro。有什么可以帮你的？ (id=reply-)
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
+[收] #628: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX (id=)
+[跳过] inbox 未处理
