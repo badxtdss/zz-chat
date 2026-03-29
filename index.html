@@ -263,6 +263,23 @@ async function sendMsg() {
 
   addMsg(curFriend, 'sent', text);
   renderMsgs();
+
+  // 发送到 API
+  try {
+    await fetch('https://ai0000.cn/zz/', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: myId,
+        to: curFriend,
+        content: text,
+        ts: Date.now()
+      })
+    });
+  } catch(e) {
+    addMsg(curFriend, 'recv', '⚠️ 发送失败');
+    renderMsgs();
+  }
 }
 
 async function sendImg(e) {
@@ -301,8 +318,22 @@ async function sendImg(e) {
   renderMsgs();
 }
 
+// ─── 轮询接收消息 ──────────────────────────────────────
+async function pollMsgs() {
+  try {
+    const resp = await fetch('https://ai0000.cn/zz/');
+    const data = await resp.json();
+    if (data.from && data.to === myId && data.content) {
+      addMsg(data.from, 'recv', data.content, data.isImage);
+      if (curFriend === data.from) renderMsgs();
+    }
+  } catch(e) {}
+  setTimeout(pollMsgs, 2000);
+}
+
 // ─── 启动 ─────────────────────────────────────────────
 init();
+pollMsgs();
 </script>
 </body>
 </html>
