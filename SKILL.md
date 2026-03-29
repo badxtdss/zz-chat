@@ -102,6 +102,35 @@ echo "桥接已启动，编号: {ZZ_ID}"
 | `worker.js` | Cloudflare Worker（多 bridge 路由） |
 | SKILL.md | 本文件 |
 
+## 使用说明
+
+### 扫码连接
+
+1. 让朋友打开爪爪首页：`https://badxtdss.github.io/zz-chat/`
+2. 首页显示二维码，手机扫码即可进入
+3. 点「➕ 添加朋友」，输入对方编号，互认后即可聊天
+4. 点「🤖 OpenClaw 聊天机器人」可直接和你的 OpenClaw 对话
+
+### 好友聊天
+
+- 输入对方编号 → 发送好友请求
+- 对方也输入你的编号 → 自动互认成为好友
+- 点好友进入聊天，消息走 WebRTC P2P 直连
+- P2P 不通时自动降级为服务器中转
+
+### 和 OpenClaw 对话
+
+- 点「🤖 OpenClaw 聊天机器人」进入对话页
+- 发消息给你的 OpenClaw，由 bridge 调用 `openclaw agent` 处理
+- 支持文字和图片
+
+## 开发者
+
+🦞 爪爪 by 秋风悠扬
+
+- B站：[秋风悠扬的个人空间](https://b23.tv/rEEYnVF)
+- 抖音：363594031
+
 ## 注意事项
 
 - 桥接需要电脑保持运行（不休眠）
