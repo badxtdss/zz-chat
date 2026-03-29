@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OpenClaw 聊天</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#e0e0e0;height:100vh;display:flex;flex-direction:column}
+.chat-header{padding:12px 16px;background:#111;display:flex;align-items:center;gap:10px;border-bottom:1px solid #222}
+.chat-header .back{background:none;border:none;color:#4fc3f7;font-size:16px;cursor:pointer}
+.chat-header .title{font-weight:500;flex:1}
+.messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:78%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.5;word-break:break-word}
+.msg.sent{align-self:flex-end;background:linear-gradient(135deg,#0f3460,#16213e);color:#e0e0e0;border-bottom-right-radius:4px}
+.msg.recv{align-self:flex-start;background:#1a1a2e;color:#e0e0e0;border-bottom-left-radius:4px}
+.msg img{max-width:100%;border-radius:8px;margin-top:4px}
+.chat-input{padding:10px 12px;background:#111;display:flex;gap:8px;align-items:center;border-top:1px solid #222}
+.chat-input input{flex:1;background:#1a1a2e;border:1px solid #333;border-radius:20px;padding:10px 16px;color:#e0e0e0;font-size:14px;outline:none}
+.chat-input input:focus{border-color:#4fc3f7}
+.chat-input button{width:40px;height:40px;border-radius:50%;border:none;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.chat-input .send{background:#e94560;color:#fff}
+.chat-input .img-btn{background:#0f3460;color:#4fc3f7}
+</style>
+</head>
+<body>
+
+<div class="chat-header">
+  <button class="back" onclick="history.back()">← 返回</button>
+  <span class="title">🤖 OpenClaw 聊天机器人</span>
+</div>
+<div class="messages" id="msgs"></div>
+<div class="chat-input">
+  <input type="file" id="imgInput" accept="image/*" style="display:none" onchange="sendImg(event)">
+  <button class="img-btn" onclick="document.getElementById('imgInput').click()">📷</button>
+  <input id="msgInput" placeholder="输入消息…" onkeydown="if(event.key==='Enter')sendMsg()">
+  <button class="send" onclick="sendMsg()">➤</button>
+</div>
+
+<script>
+// ─── 配置 ─────────────────────────────────────────────
+const POLL_MS = 2000;
+const MSG_TTL = 5*60*1000;
+
+let myId = null;
+let pollTimer = null;
+let localMsgs = {};
+
+// ─── 工具 ─────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ─── 初始化 ───────────────────────────────────────────
+async function init() {
+  const p = new URLSearchParams(location.search);
+  myId = p.get('id') || localStorage.getItem('zz_id') || String(Math.floor(Math.random()*990)+10);
+  localStorage.setItem('zz_id', myId);
+
+  localMsgs = JSON.parse(localStorage.getItem('zz_oc_local')||'{}');
+  renderMsgs();
+  scrollBottom();
+  startPoll();
+}
+
+// ─── 聊天 ─────────────────────────────────────────────
+function getMsgs() {
+  return localMsgs['oc'] || [];
+}
+
+function addMsg(dir, content, isImage) {
+  if (!localMsgs['oc']) localMsgs['oc'] = [];
+  localMsgs['oc'].push({ dir, content, isImage, ts: Date.now() });
+  if (localMsgs['oc'].length > 500) localMsgs['oc'] = localMsgs['oc'].slice(-500);
+  localStorage.setItem('zz_oc_local', JSON.stringify(localMsgs));
+}
+
+function renderMsgs() {
+  const el = $('msgs');
+  el.innerHTML = '';
+  getMsgs().forEach(m => {
+    const div = document.createElement('div');
+    div.className = `msg ${m.dir === 'sent' ? 'sent' : 'recv'}`;
+    if (m.isImage) {
+      div.innerHTML = `<img src="${m.content}" loading="lazy">`;
+    } else {
+      div.textContent = m.content;
+    }
+    el.appendChild(div);
+  });
+  scrollBottom();
+}
+
+function scrollBottom() {
+  const el = $('msgs');
+  el.scrollTop = el.scrollHeight;
+}
+
+// ─── 发送 ─────────────────────────────────────────────
+async function sendMsg() {
+  const input = $('msgInput');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  addMsg('sent', text);
+  renderMsgs();
+
+  // 发送到 OpenClaw（通过桥接）
+  try {
+    const resp = await fetch(`https://jsonblob.com/api/jsonBlob/019d375b-47e5-78a3-b551-d2e52d3aa6e2`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: myId,
+        to: 'D0',  // 发送给桥接
+        content: text,
+        ts: Date.now()
+      })
+    });
+  } catch(e) {
+    addMsg('recv', '⚠️ 发送失败，请检查网络');
+    renderMsgs();
+  }
+}
+
+async function sendImg(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+
+  let w = img.width, h = img.height;
+  const max = 800;
+  if (w > max || h > max) {
+    if (w > h) { h = h * max / w; w = max; }
+    else { w = w * max / h; h = max; }
+  }
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(img, 0, 0, w, h);
+
+  let quality = 0.7;
+  let dataUrl;
+  do {
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+    quality -= 0.1;
+  } while (dataUrl.length > 200000 && quality > 0.1);
+
+  addMsg('sent', dataUrl, true);
+  renderMsgs();
+
+  // 发送到 OpenClaw
+  try {
+    const resp = await fetch(`https://jsonblob.com/api/jsonBlob/019d375b-47e5-78a3-b551-d2e52d3aa6e2`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: myId,
+        to: 'D0',
+        content: dataUrl,
+        isImage: true,
+        ts: Date.now()
+      })
+    });
+  } catch(e) {
+    addMsg('recv', '⚠️ 图片发送失败');
+    renderMsgs();
+  }
+}
+
+// ─── 轮询 ─────────────────────────────────────────────
+function startPoll() {
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+async function poll() {
+  try {
+    const r = await fetch(`https://jsonblob.com/api/jsonBlob/019d375b-47e5-78a3-b551-d2e52d3aa6e2`, { cache: 'no-store' });
+    const data = await r.json();
+
+    if (data && data.to === myId && data.from === 'D0' && data.content) {
+      const now = Date.now();
+
+      // 去重
+      const existing = getMsgs();
+      const isDup = existing.some(m =>
+        m.dir === 'recv' && m.content === data.content && now - m.ts < 10000
+      );
+
+      if (!isDup && (!data.ts || now - data.ts < MSG_TTL)) {
+        addMsg('recv', data.content, data.isImage);
+        renderMsgs();
+      }
+    }
+  } catch(e) {}
+}
+
+// ─── 启动 ─────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

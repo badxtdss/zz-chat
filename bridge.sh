@@ -1,5 +1,5 @@
 #!/bin/bash
-# 爪爪桥接 v2 — 纯前端 + jsonblob.com
+# 爪爪桥接 v3 — jsonblob.com
 DIR="$HOME/.zz"
 BLOB_ID="019d375b-47e5-78a3-b551-d2e52d3aa6e2"
 API="https://jsonblob.com/api/jsonBlob"
@@ -7,7 +7,7 @@ MY_ID="D$(cat "$DIR/id" 2>/dev/null || echo 0)"
 
 echo ""
 echo "  ┌────────────────────────────────────────┐"
-echo "  │  🦞 爪爪桥接 v2                       │"
+echo "  │  🦞 爪爪桥接 v3                       │"
 echo "  │  编号: $MY_ID                          │"
 echo "  │  引擎: OpenClaw CLI                    │"
 echo "  │  等待手机发消息…                       │"
