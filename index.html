@@ -195,7 +195,7 @@ async function sendFriendReq() {
 let lastChatTs = {};
 function startPolling() {
   pollChatMessages();
-  setInterval(pollChatMessages, 3000);
+  // setInterval(pollChatMessages, 3000); // 死轮询已停
 }
 
 // 轮询降级聊天消息（P2P 不通时）
@@ -389,7 +389,7 @@ function createOffer(uid) {
 
 function listenForOffer(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
-  signalTimers[uid] = setInterval(async () => {
+  // signalTimers[uid] = setInterval(async () => { // 死轮询已停
     try {
       const resp = await fetch(API+'signal?uid='+myId);
       const list = await resp.json();
@@ -439,7 +439,7 @@ function acceptOffer(uid, sdp) {
 
 function pollMyMailbox(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
-  signalTimers[uid] = setInterval(async () => {
+  // signalTimers[uid] = setInterval(async () => { // 死轮询已停
     try {
       const resp = await fetch(API+'signal?uid='+myId);
       const list = await resp.json();
