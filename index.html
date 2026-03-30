@@ -133,9 +133,10 @@ function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36
 async function init() {
   const p = new URLSearchParams(location.search);
   const bridge = p.get('bridge');
-  myId = localStorage.getItem('zz_id');
-  if (bridge && /^\d+$/.test(bridge)) { myId = bridge; localStorage.setItem('zz_id', myId); history.replaceState(null, '', location.pathname); }
-  if (!myId) { alert('请先部署桥接获取编号\n\n参见爪爪 SKILL 说明'); return; }
+  if (!bridge) { alert('请扫描二维码进入'); return; }
+  myId = bridge;
+  localStorage.setItem('zz_id', myId);
+  history.replaceState(null, '', location.pathname);
   $('myBadge').textContent = `我的编号 ${myId}`;
   friends = JSON.parse(localStorage.getItem('zz_friends')||'[]');
   localMsgs = JSON.parse(localStorage.getItem('zz_local')||'{}');
