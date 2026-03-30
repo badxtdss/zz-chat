@@ -137,6 +137,27 @@ export class ChatRoom {
       return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
+    // 内部转发（跨分片朋友互聊）
+    if (url.pathname.includes('/fwd') && request.method === 'PUT') {
+      const data = await request.json();
+      const to = data.to;
+      if (to) {
+        // 推给在线手机
+        if (this.phones[to]) {
+          try { this.phones[to].send(JSON.stringify(data)); } catch {}
+        } else if (!data.isImage && data.content) {
+          // 离线文字存持久存储
+          const pendingKey = `msg_${to}`;
+          const stored = await this.state.storage.get(pendingKey).catch(() => null);
+          const msgs = stored || [];
+          msgs.push({ from: data.from, content: data.content, ts: data.ts || Date.now(), msg_id: data.msg_id });
+          if (msgs.length > 100) msgs.splice(0, msgs.length - 100);
+          await this.state.storage.put(pendingKey, msgs);
+        }
+      }
+      return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
     if (request.headers.get('Upgrade') === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
       await this.handleSession(server, url.searchParams);
@@ -215,13 +236,25 @@ export class ChatRoom {
           if (data.from) touchUser(this.env, data.from);
           if (to) touchUser(this.env, to);
 
-          // 朋友互聊：直发或存储
+          // 朋友互聊：路由到接收方的分片 DO
           if (to && !to.startsWith('D')) {
+            const targetShard = getShard(to);
+            const myShard = getShard(uid || '0');
+            if (targetShard !== myShard) {
+              // 跨分片：转发到接收方的 DO
+              const targetRoom = getRoom(this.env, to);
+              const fwdReq = new Request('https://internal/fwd', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+              });
+              targetRoom.fetch(fwdReq).catch(() => {});
+              return;
+            }
+            // 同分片：本地处理
             if (this.phones[to]) {
-              // 对方在线，直接推
               try { this.phones[to].send(JSON.stringify(data)); } catch {}
             } else if (!data.isImage && data.content) {
-              // 对方不在线 + 文字消息 → 存 DO 持久存储
               const pendingKey = `msg_${to}`;
               this.state.storage.get(pendingKey).then(stored => {
                 const msgs = stored || [];
@@ -230,7 +263,7 @@ export class ChatRoom {
                 this.state.storage.put(pendingKey, msgs);
               }).catch(() => {});
             }
-            return; // 朋友消息不走 bridge
+            return;
           }
 
           // OC 聊天：走 bridge
