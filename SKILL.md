@@ -6,47 +6,34 @@ metadata: {"clawdbot":{"emoji":"🦞"}}
 
 # 爪爪 🦞 — 手机直连 OpenClaw
 
-## 启动流程（两步）
+## 执行流程（按顺序执行，每一步都做）
+
+用户说"部署爪爪"或类似指令时，按以下步骤自动执行：
 
 ### 第一步：部署桥接
 
-复制 bridge.py 到桥接目录并启动：
-
-**macOS / Linux：**
-
 ```bash
-# 停掉旧桥接
 pkill -f "bridge.py" 2>/dev/null; sleep 1
 
-# 部署桥接
 BRIDGE_DIR=~/.openclaw/workspace/openchat/bridge
 mkdir -p "$BRIDGE_DIR"
-cp bridge.py "$BRIDGE_DIR/"
+cp ~/.openclaw/skills/zz-chat/bridge.py "$BRIDGE_DIR/"
 nohup python3 -u "$BRIDGE_DIR/bridge.py" >> "$BRIDGE_DIR/bridge.log" 2>&1 &
-sleep 3
-
-# 读取编号（首次运行会自动向服务器注册）
-ZZ_ID=$(cat ~/.zz/id 2>/dev/null)
-echo "桥接已启动，编号: $ZZ_ID"
+sleep 5
 ```
 
-**Windows 10：**
+### 第二步：获取编号
 
-1. 安装 [Node.js](https://nodejs.org/)（LTS 版本）
-2. 双击 `start-bridge.bat` 启动桥接
-3. 首次运行会自动安装依赖（ws）并向服务器注册获取编号
-4. 编号保存在 `C:\Users\用户名\.zz\id`
+桥接启动后会自动向服务器注册，读取编号：
 
-> bridge.py（Python）和 bridge.js（Node.js）功能一样，选你系统能用的。
+```bash
+ZZ_ID=$(cat ~/.zz/id 2>/dev/null)
+echo "编号: $ZZ_ID"
+```
 
-**bridge 首次启动时会自动：**
-- 向 Worker `/register` 请求编号
-- 将编号保存到 `~/.zz/id`
-- 后续启动直接读取本地编号，不再注册
+### 第三步：展示二维码
 
-### 第二步：显示二维码
-
-读取 `~/.zz/id` 中的编号，用 canvas 展示 QR 码（把 `{ZZ_ID}` 替换为实际编号）：
+把 `{ZZ_ID}` 替换为实际编号，保存到 `/tmp/zz-qr.html`，用 canvas 打开：
 
 ```html
 <!DOCTYPE html>
@@ -61,7 +48,7 @@ h1{font-size:24px;margin-bottom:8px}
 </style></head>
 <body>
 <h1>🦞 爪爪</h1>
-<div class="id" id="myId">编号 {ZZ_ID}</div>
+<div class="id">编号 {ZZ_ID}</div>
 <div class="qr" id="qrBox"></div>
 <div class="hint">手机扫码打开爪爪<br>消息通过你的 OpenClaw 处理</div>
 <script>
@@ -75,15 +62,13 @@ document.getElementById('qrBox').appendChild(img);
 </html>
 ```
 
-### 第三步：告诉用户
+### 第四步：告诉用户
 
 ```
 ✅ 爪爪已启动！
 
 🦞 你的编号: {ZZ_ID}
-📱 手机扫码或访问: https://badxtdss.github.io/zz-chat/?bridge={ZZ_ID}
-
-桥接正在运行，手机发的消息会直达你的 OpenClaw。
+📱 手机扫码进入即可聊天
 ```
 
 ## 架构
