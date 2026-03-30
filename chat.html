@@ -44,8 +44,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 // ─── 配置 ─────────────────────────────────────────────
 const API = new URLSearchParams(location.search).get('api') || 'https://ai0000.cn/zz/';
-const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + '?role=phone&uid=';
-const RECONNECT_MS = 3000;
 
 let myId = null;
 let ws = null;
@@ -65,72 +63,38 @@ async function init() {
   renderMsgs();
   scrollBottom();
   connectWS();
-  // HTTP 轮询降级（WebSocket 推送失败时也能收到回复）
   setInterval(pollReply, 3000);
 }
 
-async function pollReply() {
-  try {
-    const resp = await fetch(API);
-    const data = await resp.json();
-    if (!data || !data.content || !data.from) return;
-    const mid = data.msg_id || '';
-    if (data.to === myId && mid && !ocSeenIds.includes(mid)) {
-      ocSeenIds.push(mid);
-      if (ocSeenIds.length > 200) ocSeenIds = ocSeenIds.slice(-200);
-      localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
-      addMsg('recv', data.content, data.isImage);
-      renderMsgs();
-      // 读完清空
-      await fetch(API, { method:'PUT', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({from:'',to:'',content:'',msg_id:'',ts:0,isImage:false}) });
-    }
-  } catch {}
-}
-
-// ─── WebSocket ────────────────────────────────────────
-let heartbeatTimer = null;
+// ─── HTTP 轮询收消息 ───────────────────────────────────
+let ws = null; // 不再使用 WebSocket
+let lastPollTs = 0;
 
 function connectWS() {
-  try {
-    ws = new WebSocket(WS_URL + myId);
-    ws.onopen = () => {
-      $('wsStatus').className = 'status on';
-      console.log('[WS] connected');
-      // 心跳：每 25 秒发一次空消息防断开
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = setInterval(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ from: myId, to: myId, content: '', ts: Date.now() }));
-        }
-      }, 25000);
-    };
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        const mid = data.msg_id || '';
-        if (data.to === myId && data.from && data.content && mid && !ocSeenIds.includes(mid)) {
-          ocSeenIds.push(mid);
+  // 手机端不需要 WebSocket，改用 HTTP 轮询
+  $('wsStatus').className = 'status on';
+  console.log('[轮询] 启动');
+}
+
+function pollReply() {
+  fetch(API + 'chat?uid=' + myId, { cache: 'no-store' })
+    .then(r => r.json())
+    .then(list => {
+      if (!Array.isArray(list)) return;
+      for (const m of list) {
+        const ts = m.ts || 0;
+        if (ts <= lastPollTs) continue;
+        lastPollTs = ts;
+        if (m.to === myId && m.content && m.msg_id && !ocSeenIds.includes(m.msg_id)) {
+          ocSeenIds.push(m.msg_id);
           if (ocSeenIds.length > 200) ocSeenIds = ocSeenIds.slice(-200);
           localStorage.setItem('zz_oc_seen', JSON.stringify(ocSeenIds));
-          addMsg('recv', data.content, data.isImage);
+          addMsg('recv', m.content, m.isImage);
           renderMsgs();
         }
-      } catch {}
-    };
-    ws.onclose = () => {
-      $('wsStatus').className = 'status';
-      clearInterval(heartbeatTimer);
-      console.log('[WS] disconnected, reconnecting...');
-      setTimeout(connectWS, RECONNECT_MS);
-    };
-    ws.onerror = () => {
-      clearInterval(heartbeatTimer);
-      ws.close();
-    };
-  } catch {
-    setTimeout(connectWS, RECONNECT_MS);
-  }
+      }
+    })
+    .catch(() => {});
 }
 
 // ─── 聊天 ─────────────────────────────────────────────
@@ -172,17 +136,11 @@ async function sendMsg() {
 
   const msg = { msg_id: genId(), from: myId, to: myId, content: text, ts: Date.now() };
 
-  // 优先走 WebSocket
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  } else {
-    // 降级走 REST
-    try {
-      await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
-    } catch {
-      addMsg('recv', '⚠️ 发送失败');
-      renderMsgs();
-    }
+  try {
+    await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
+  } catch {
+    addMsg('recv', '⚠️ 发送失败');
+    renderMsgs();
   }
 }
 
@@ -209,8 +167,7 @@ async function sendImg(e) {
   renderMsgs();
 
   const msg = { msg_id: genId(), from: myId, to: myId, content: dataUrl, isImage: true, ts: Date.now() };
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-  else try { await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) }); }
+  try { await fetch(API, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg) }); }
   catch { addMsg('recv', '⚠️ 图片发送失败'); renderMsgs(); }
 }
 
