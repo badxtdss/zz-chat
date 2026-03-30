@@ -191,11 +191,10 @@ async function sendFriendReq() {
   hideAdd();
 }
 
-// ─── 轮询（仅聊天降级）──────────────────────────────────
+// ─── 轮询（P2P 不通时降级）──────────────────────────────
 let lastChatTs = {};
 function startPolling() {
-  // pollChatMessages(); // 死轮询已停
-  // setInterval(pollChatMessages, 3000); // 死轮询已停
+  setInterval(pollChatMessages, 5000);
 }
 
 // 轮询降级聊天消息（P2P 不通时）
