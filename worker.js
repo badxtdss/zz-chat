@@ -158,8 +158,8 @@ export class ChatRoom {
     if (request.method === 'PUT') {
       const body = await request.json();
       const to = body.to;
-      // 只存 bridge 的回复到 pendingMsg，手机自己的消息不存
-      if (to && body.from && body.from.startsWith('D')) this.pendingMsg[to] = body;
+      // 存 bridge 回复 + 用户间消息，不存手机自己的回显
+      if (to && body.from && (body.from.startsWith('D') || body.from !== to)) this.pendingMsg[to] = body;
       // 更新活跃时间
       if (body.from) await touchUser(this.env, body.from);
       if (to) await touchUser(this.env, to);
