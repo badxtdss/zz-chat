@@ -46,7 +46,7 @@ echo "桥接已启动，编号: $ZZ_ID"
 
 ### 第二步：显示二维码
 
-读取 `~/.zz/id` 中的编号，然后用 canvas 展示 QR 码。将下面的 HTML 保存到临时文件，用 canvas 打开（把 `{ZZ_ID}` 替换为实际编号）：
+读取 `~/.zz/id` 中的编号，用 canvas 展示 QR 码（把 `{ZZ_ID}` 替换为实际编号）：
 
 ```html
 <!DOCTYPE html>
@@ -63,7 +63,7 @@ h1{font-size:24px;margin-bottom:8px}
 <h1>🦞 爪爪</h1>
 <div class="id" id="myId">编号 {ZZ_ID}</div>
 <div class="qr" id="qrBox"></div>
-<div class="hint">手机扫码打开爪爪<br>添加好友后即可聊天<br>消息通过你的 OpenClaw 处理</div>
+<div class="hint">手机扫码打开爪爪<br>消息通过你的 OpenClaw 处理</div>
 <script>
 const url = 'https://badxtdss.github.io/zz-chat/?bridge={ZZ_ID}';
 const img = new Image();
@@ -90,8 +90,8 @@ document.getElementById('qrBox').appendChild(img);
 
 ```
 手机 ──→ Worker (ai0000.cn/zz/) ──→ bridge.py (你电脑) ──→ openclaw agent CLI
-         ↕ WebSocket               ↕ WebSocket              ↕ 当前会话
-         按编号路由 bridge          收消息→调CLI→拿回复      处理+回复
+         ↕ HTTP 轮询(每3秒)         ↕ WebSocket              ↕ 当前会话
+         GET轮询收消息 / PUT发消息    收消息→调CLI→拿回复      处理+回复
 ```
 
 ## 文件说明
@@ -101,32 +101,18 @@ document.getElementById('qrBox').appendChild(img);
 | `bridge.py` | 桥接脚本（Python 3 + websockets） |
 | `bridge.js` | 桥接脚本（Node.js + ws）Windows 兼容 |
 | `start-bridge.bat` | Windows 启动脚本 |
-| `index.html` | 手机端首页（添加好友 + P2P 聊天） |
-| `chat.html` | 手机端 OpenClaw 对话页 |
-| `worker.js` | Cloudflare Worker（多 bridge 路由） |
+| `index.html` | 手机端首页（需扫码进入） |
+| `chat.html` | 手机端 OpenClaw 对话页（HTTP 轮询） |
+| `worker.js` | Cloudflare Worker（编号自增 + 桥接路由 + 自动清理） |
 | SKILL.md | 本文件 |
 
-## 使用说明
+## 注意事项
 
-### 扫码连接
-
-1. 让朋友打开爪爪首页：`https://badxtdss.github.io/zz-chat/`
-2. 首页显示二维码，手机扫码即可进入
-3. 点「➕ 添加朋友」，输入对方编号，互认后即可聊天
-4. 点「🤖 OpenClaw 聊天机器人」可直接和你的 OpenClaw 对话
-
-### 好友聊天
-
-- 输入对方编号 → 发送好友请求
-- 对方也输入你的编号 → 自动互认成为好友
-- 点好友进入聊天，消息走 WebRTC P2P 直连
-- P2P 不通时自动降级为服务器中转
-
-### 和 OpenClaw 对话
-
-- 点「🤖 OpenClaw 聊天机器人」进入对话页
-- 发消息给你的 OpenClaw，由 bridge 调用 `openclaw agent` 处理
-- 支持文字和图片
+- 只有扫码（带 `?bridge=` 参数）才能进入网页，直接打开会被拒绝
+- 桥接需要电脑保持运行（不休眠）
+- Worker 地址默认 `https://ai0000.cn/zz/`，可自建
+- 消息通过 `openclaw agent` CLI 处理，走当前会话
+- 注册后 1 小时未发消息自动清理，发过消息后 24 小时不活跃自动清理
 
 ## 开发者
 
@@ -134,10 +120,3 @@ document.getElementById('qrBox').appendChild(img);
 
 - B站：[秋风悠扬的个人空间](https://b23.tv/rEEYnVF)
 - 抖音：363594031
-
-## 注意事项
-
-- 桥接需要电脑保持运行（不休眠）
-- Worker 地址默认 `https://ai0000.cn/zz/`，可自建
-- 每个用户有独立的 bridge，互不干扰
-- 消息通过 `openclaw agent` CLI 处理，走当前会话
