@@ -150,7 +150,7 @@ function openOC() { window.location.href = 'chat.html?id=' + myId; }
 
 // ─── QR码 ─────────────────────────────────────────────
 function genQR() {
-  const url = `https://badxtdss.github.io/zz-chat/?bridge=${myId}`;
+  const url = `${location.origin}${location.pathname}?bridge=${myId}`;
   const box = $('qrBox'); box.innerHTML = '';
   const img = new Image();
   img.style.cssText = 'border-radius:8px;background:#fff;padding:8px;width:160px;height:160px';
@@ -195,7 +195,7 @@ async function sendFriendReq() {
 let lastChatTs = {};
 function startPolling() {
   pollChatMessages();
-  // setInterval(pollChatMessages, 3000); // 死轮询已停
+  setInterval(pollChatMessages, 3000);
 }
 
 // 轮询降级聊天消息（P2P 不通时）
@@ -389,7 +389,7 @@ function createOffer(uid) {
 
 function listenForOffer(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
-  // signalTimers[uid] = setInterval(async () => { // 死轮询已停
+  signalTimers[uid] = setInterval(async () => {
     try {
       const resp = await fetch(API+'signal?uid='+myId);
       const list = await resp.json();
@@ -439,7 +439,7 @@ function acceptOffer(uid, sdp) {
 
 function pollMyMailbox(uid) {
   if (signalTimers[uid]) clearInterval(signalTimers[uid]);
-  // signalTimers[uid] = setInterval(async () => { // 死轮询已停
+  signalTimers[uid] = setInterval(async () => {
     try {
       const resp = await fetch(API+'signal?uid='+myId);
       const list = await resp.json();

@@ -10,19 +10,12 @@ const CORS = {
 const HOUR = 3600000;
 const DAY = 86400000;
 
-// ─── 分片：每 8 人一个 DO ─────────────────────────────
-function getShard(uid) { return Math.floor((parseInt(uid) || 0) / 8); }
-function getRoom(env, uid) {
-  const id = env.CHAT_ROOM.idFromName('shard-' + getShard(uid));
-  return env.CHAT_ROOM.get(id);
-}
-
 // ─── 注册（编号自增）─────────────────────────────────
 async function handleRegister(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'GET') return new Response('Method not allowed', { status: 405, headers: CORS });
 
-  const id = env.CHAT_ROOM.idFromName('shard-0');
+  const id = env.CHAT_ROOM.idFromName('openclaw');
   const room = env.CHAT_ROOM.get(id);
   return room.fetch(new Request('https://internal/register', { method: 'GET' }));
 }
@@ -116,8 +109,14 @@ export class ChatRoom {
   async fetch(request) {
     const url = new URL(request.url);
 
+    // 重置编号计数器
+    if (url.pathname.includes('/reset')) {
+      await this.state.storage.put('counter', 0);
+      return new Response(JSON.stringify({ ok: true, counter: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+    }
+
     // 注册端点（编号自增）
-    if (url.pathname === '/register') {
+    if (url.pathname.includes('/register')) {
       const nextId = (await this.state.storage.get('counter') || 0) + 1;
       await this.state.storage.put('counter', nextId);
       const uid = String(nextId);
@@ -126,7 +125,7 @@ export class ChatRoom {
     }
 
     // 清理端点（cron 调用）
-    if (url.pathname === '/cleanup') {
+    if (url.pathname.includes('/cleanup')) {
       const result = await handleCleanup(this.env);
       return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
@@ -242,10 +241,8 @@ export default {
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
     if (url.pathname.includes('/chat')) return handleChat(request, env);
-    // 按 uid 分片到不同 DO
-    let uid = url.searchParams.get('uid');
-    if (!uid) try { const body = await request.clone().json(); uid = body.to || body.from; } catch {}
-    const room = getRoom(env, uid || '0');
+    const id = env.CHAT_ROOM.idFromName('openclaw');
+    const room = env.CHAT_ROOM.get(id);
     return room.fetch(request);
   },
   // Cron trigger：每天清理
