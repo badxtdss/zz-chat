@@ -10,12 +10,19 @@ const CORS = {
 const HOUR = 3600000;
 const DAY = 86400000;
 
+// ─── 分片：每 8 人一个 DO ─────────────────────────────
+function getShard(uid) { return Math.floor((parseInt(uid) || 0) / 8); }
+function getRoom(env, uid) {
+  const id = env.CHAT_ROOM.idFromName('shard-' + getShard(uid));
+  return env.CHAT_ROOM.get(id);
+}
+
 // ─── 注册（编号自增）─────────────────────────────────
 async function handleRegister(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'GET') return new Response('Method not allowed', { status: 405, headers: CORS });
 
-  const id = env.CHAT_ROOM.idFromName('openclaw');
+  const id = env.CHAT_ROOM.idFromName('shard-0');
   const room = env.CHAT_ROOM.get(id);
   return room.fetch(new Request('https://internal/register', { method: 'GET' }));
 }
@@ -235,8 +242,10 @@ export default {
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
     if (url.pathname.includes('/chat')) return handleChat(request, env);
-    const id = env.CHAT_ROOM.idFromName('openclaw');
-    const room = env.CHAT_ROOM.get(id);
+    // 按 uid 分片到不同 DO
+    let uid = url.searchParams.get('uid');
+    if (!uid) try { const body = await request.clone().json(); uid = body.to || body.from; } catch {}
+    const room = getRoom(env, uid || '0');
     return room.fetch(request);
   },
   // Cron trigger：每天清理
