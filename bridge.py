@@ -21,13 +21,39 @@ try:
 except ImportError:
     pass
 
-import websockets, urllib.request
+import websockets, urllib.request, sys
 
-API = os.environ.get("ZZ_API", "https://ai0000.cn/zz/")
+# 优先级: 环境变量 > ~/.zz/worker_url 文件 > 默认值
+_API_DEFAULT = "https://ai0000.cn/zz/"
+_WORKER_FILE = os.path.expanduser("~/.zz/worker_url")
+API = os.environ.get("ZZ_API")
+if not API and os.path.exists(_WORKER_FILE):
+    API = open(_WORKER_FILE).read().strip().rstrip('/') + '/'
+if not API:
+    API = _API_DEFAULT
+
+# 支持 --worker 参数
+if "--worker" in sys.argv:
+    idx = sys.argv.index("--worker")
+    if idx + 1 < len(sys.argv):
+        API = sys.argv[idx + 1].rstrip('/') + '/'
+
+# 支持 --uid 参数
+_uid_override = None
+if "--uid" in sys.argv:
+    idx = sys.argv.index("--uid")
+    if idx + 1 < len(sys.argv):
+        _uid_override = sys.argv[idx + 1]
 
 # 读取或获取用户编号
 ID_FILE = os.path.expanduser("~/.zz/id")
-if os.path.exists(ID_FILE):
+if _uid_override:
+    MY_ID = _uid_override
+    os.makedirs(os.path.dirname(ID_FILE), exist_ok=True)
+    with open(ID_FILE, "w") as f:
+        f.write(MY_ID)
+    print(f"[设置] 编号: {MY_ID}", flush=True)
+elif os.path.exists(ID_FILE):
     MY_ID = open(ID_FILE).read().strip()
     print(f"[加载] 编号: {MY_ID}", flush=True)
 else:
