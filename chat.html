@@ -89,12 +89,21 @@ async function pollReply() {
 }
 
 // ─── WebSocket ────────────────────────────────────────
+let heartbeatTimer = null;
+
 function connectWS() {
   try {
     ws = new WebSocket(WS_URL + myId);
     ws.onopen = () => {
       $('wsStatus').className = 'status on';
       console.log('[WS] connected');
+      // 心跳：每 25 秒发一次空消息防断开
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ from: myId, to: myId, content: '', ts: Date.now() }));
+        }
+      }, 25000);
     };
     ws.onmessage = (e) => {
       try {
@@ -111,10 +120,12 @@ function connectWS() {
     };
     ws.onclose = () => {
       $('wsStatus').className = 'status';
+      clearInterval(heartbeatTimer);
       console.log('[WS] disconnected, reconnecting...');
       setTimeout(connectWS, RECONNECT_MS);
     };
     ws.onerror = () => {
+      clearInterval(heartbeatTimer);
       ws.close();
     };
   } catch {
