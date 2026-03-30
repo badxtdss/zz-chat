@@ -149,16 +149,28 @@ async def main():
         try:
             async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10, proxy=None) as ws:
                 print(f"[已连接] {WS_URL}", flush=True)
-                async for raw in ws:
-                    try:
-                        data = json.loads(raw)
-                        reply_msg = await handle_message(data)
-                        if reply_msg:
-                            await ws.send(json.dumps(reply_msg))
-                    except json.JSONDecodeError:
-                        pass
-                    except Exception as e:
-                        print(f"[处理错误] {e}", flush=True)
+                # 并发心跳任务
+                async def heartbeat():
+                    while True:
+                        await asyncio.sleep(30)
+                        try:
+                            print("[心跳] 连接正常", flush=True)
+                        except:
+                            break
+                hb = asyncio.create_task(heartbeat())
+                try:
+                    async for raw in ws:
+                        try:
+                            data = json.loads(raw)
+                            reply_msg = await handle_message(data)
+                            if reply_msg:
+                                await ws.send(json.dumps(reply_msg))
+                        except json.JSONDecodeError:
+                            pass
+                        except Exception as e:
+                            print(f"[处理错误] {e}", flush=True)
+                finally:
+                    hb.cancel()
         except Exception as e:
             print(f"[断开] {e}，5秒后重连...", flush=True)
             await asyncio.sleep(5)
