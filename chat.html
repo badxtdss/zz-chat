@@ -58,7 +58,8 @@ function genId() { return 'uuid-' + Date.now() + '-' + Math.random().toString(36
 // ─── 初始化 ───────────────────────────────────────────
 async function init() {
   const p = new URLSearchParams(location.search);
-  myId = p.get('id') || localStorage.getItem('zz_id') || String(Math.floor(Math.random()*990)+10);
+  myId = p.get('id') || localStorage.getItem('zz_id');
+  if (!myId) { alert('请先部署桥接获取编号'); return; }
   localStorage.setItem('zz_id', myId);
   localMsgs = JSON.parse(localStorage.getItem('zz_oc_local')||'{}');
   renderMsgs();

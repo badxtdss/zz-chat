@@ -9,15 +9,23 @@ const os = require('os');
 const API = process.env.ZZ_API || 'https://ai0000.cn/zz/';
 const ID_FILE = path.join(os.homedir(), '.zz', 'id');
 
-// 读取或生成编号
+// 读取或获取编号
 let MY_ID;
 try {
   MY_ID = fs.readFileSync(ID_FILE, 'utf8').trim();
+  console.log(`[加载] 编号: ${MY_ID}`);
 } catch {
-  MY_ID = String(Math.floor(Math.random() * 900) + 100);
-  fs.mkdirSync(path.dirname(ID_FILE), { recursive: true });
-  fs.writeFileSync(ID_FILE, MY_ID);
-  console.log(`[初始化] 生成编号: ${MY_ID}`);
+  // 没有本地编号，向服务器注册
+  try {
+    const resp = execSync(`curl -s "${API}register"`, { encoding: 'utf8' });
+    MY_ID = JSON.parse(resp).id;
+    fs.mkdirSync(path.dirname(ID_FILE), { recursive: true });
+    fs.writeFileSync(ID_FILE, MY_ID);
+    console.log(`[注册成功] 编号: ${MY_ID}`);
+  } catch (e) {
+    console.error(`[错误] 获取编号失败: ${e.message}`);
+    process.exit(1);
+  }
 }
 
 const BRIDGE_ID = 'D' + MY_ID;
