@@ -1,25 +1,48 @@
 #!/usr/bin/env python3
 """爪爪桥接 v15 — WebSocket + openclaw agent CLI 直连"""
-import asyncio, json, os, subprocess, time
+import asyncio, json, os, subprocess, sys, time
 
-# 先清除 SOCKS 代理，再 import websockets
+# Windows 编码修复
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# 清除代理 + 设置 SSL 证书（必须在 import websockets 之前）
 os.environ.pop('all_proxy', None)
 os.environ.pop('ALL_PROXY', None)
+os.environ.pop('http_proxy', None)
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('https_proxy', None)
+os.environ.pop('HTTPS_PROXY', None)
+try:
+    import certifi
+    os.environ['SSL_CERT_FILE'] = certifi.where()
+except ImportError:
+    pass
 
-import websockets
+import websockets, urllib.request
 
 API = os.environ.get("ZZ_API", "https://ai0000.cn/zz/")
 
-# 读取用户编号
+# 读取或获取用户编号
 ID_FILE = os.path.expanduser("~/.zz/id")
 if os.path.exists(ID_FILE):
     MY_ID = open(ID_FILE).read().strip()
+    print(f"[加载] 编号: {MY_ID}", flush=True)
 else:
-    MY_ID = str(int(time.time()) % 900 + 100)
-    os.makedirs(os.path.dirname(ID_FILE), exist_ok=True)
-    with open(ID_FILE, "w") as f:
-        f.write(MY_ID)
-    print(f"[初始化] 生成编号: {MY_ID}", flush=True)
+    try:
+        req = urllib.request.Request(API + "register", headers={"User-Agent": "zz-bridge/15"})
+        resp = urllib.request.urlopen(req)
+        data = json.loads(resp.read())
+        MY_ID = data["id"]
+        os.makedirs(os.path.dirname(ID_FILE), exist_ok=True)
+        with open(ID_FILE, "w") as f:
+            f.write(MY_ID)
+        print(f"[注册成功] 编号: {MY_ID}", flush=True)
+    except Exception as e:
+        print(f"[错误] 获取编号失败: {e}", flush=True)
+        exit(1)
 
 BRIDGE_ID = "D" + MY_ID
 SESSION_ID = "zz-" + MY_ID
