@@ -1,5 +1,5 @@
-// Cloudflare Worker — 爪爪 v8
-// 编号自增 + 自动清理 + 多 bridge 路由
+// Cloudflare Worker — 爪爪 v7
+// 编号自增 + 自动清理 + 多 bridge 路由 + 好友请求 + 信令 + 聊天降级
 // 部署: wrangler deploy
 
 const CORS = {
@@ -20,7 +20,52 @@ async function handleRegister(request, env) {
   return room.fetch(new Request('https://internal/register', { method: 'GET' }));
 }
 
-// ─── 清理 ─────────────────────────────────────────────
+// ─── 好友请求 ─────────────────────────────────────────
+async function handleFriend(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  if (!uid) return new Response(JSON.stringify({ error: 'uid required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  const key = `friend_${uid}`;
+  if (request.method === 'GET') { return new Response(await env.ZZ_STORE.get(key) || '[]', { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'DELETE') { await env.ZZ_STORE.put(key, '[]'); return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'PUT') {
+    const body = await request.json();
+    const raw = await env.ZZ_STORE.get(key);
+    const list = raw ? JSON.parse(raw) : [];
+    if (!list.some(r => r.from === body.from)) { list.push(body); if (list.length > 50) list.splice(0, list.length - 50); await env.ZZ_STORE.put(key, JSON.stringify(list)); }
+    return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+  }
+  return new Response('Method not allowed', { status: 405, headers: CORS });
+}
+
+// ─── WebRTC 信令 ──────────────────────────────────────
+async function handleSignaling(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  if (!uid) return new Response(JSON.stringify({ error: 'uid required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  const key = `signal_${uid}`;
+  if (request.method === 'GET') { return new Response(await env.ZZ_STORE.get(key) || '[]', { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'POST') { const body = await request.json(); const raw = await env.ZZ_STORE.get(key); const q = raw ? JSON.parse(raw) : []; q.push(body); if (q.length > 30) q.splice(0, q.length - 30); await env.ZZ_STORE.put(key, JSON.stringify(q)); return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'DELETE') { await env.ZZ_STORE.put(key, '[]'); return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  return new Response('Method not allowed', { status: 405, headers: CORS });
+}
+
+// ─── 聊天降级 ─────────────────────────────────────────
+async function handleChat(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  if (!uid) return new Response(JSON.stringify({ error: 'uid required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  const key = `chat_${uid}`;
+  if (request.method === 'GET') { return new Response(await env.ZZ_STORE.get(key) || '[]', { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'PUT') { const body = await request.json(); const raw = await env.ZZ_STORE.get(key); const q = raw ? JSON.parse(raw) : []; q.push(body); if (q.length > 100) q.splice(0, q.length - 100); await env.ZZ_STORE.put(key, JSON.stringify(q)); return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  if (request.method === 'DELETE') { await env.ZZ_STORE.put(key, '[]'); return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } }); }
+  return new Response('Method not allowed', { status: 405, headers: CORS });
+}
+
+// ─── 清理（每天跑一次）────────────────────────────────
 async function handleCleanup(env) {
   const now = Date.now();
   let cursor;
@@ -33,11 +78,15 @@ async function handleCleanup(env) {
       checked++;
       try {
         const user = JSON.parse(await env.ZZ_STORE.get(key.name));
+        const uid = key.name.replace('user_', '');
         let shouldDelete = false;
-        if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true;
-        if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true;
+        if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true; // 1h未发消息
+        if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true; // 24h不活跃
         if (shouldDelete) {
           await env.ZZ_STORE.delete(key.name);
+          await env.ZZ_STORE.delete(`friend_${uid}`);
+          await env.ZZ_STORE.delete(`signal_${uid}`);
+          await env.ZZ_STORE.delete(`chat_${uid}`);
           deleted++;
         }
       } catch {}
@@ -47,19 +96,20 @@ async function handleCleanup(env) {
   return { checked, deleted };
 }
 
-// ─── Durable Object ───────────────────────────────────
+// ─── OpenClaw Durable Object ──────────────────────────
 export class ChatRoom {
   constructor(state, env) {
     this.state = state;
     this.env = env;
     this.bridges = {};
+    this.phones = {};
     this.pendingMsg = {};
   }
 
   async fetch(request) {
     const url = new URL(request.url);
 
-    // 注册
+    // 注册端点（编号自增）
     if (url.pathname === '/register') {
       const nextId = (await this.state.storage.get('counter') || 0) + 1;
       await this.state.storage.put('counter', nextId);
@@ -68,13 +118,12 @@ export class ChatRoom {
       return new Response(JSON.stringify({ id: uid }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // 清理
+    // 清理端点（cron 调用）
     if (url.pathname === '/cleanup') {
       const result = await handleCleanup(this.env);
       return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // WebSocket（bridge 用）
     if (request.headers.get('Upgrade') === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
       await this.handleSession(server, url.searchParams);
@@ -82,25 +131,31 @@ export class ChatRoom {
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    // GET — 手机轮询消息
+    // 更新活跃时间
+    const uid = url.searchParams.get('uid');
+    if (uid) await touchUser(this.env, uid);
+
     if (request.method === 'GET') {
-      const uid = url.searchParams.get('uid');
       if (uid && this.pendingMsg[uid]) {
         return new Response(JSON.stringify(this.pendingMsg[uid]), { headers: { ...CORS, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ from:'', to:'', content:'', msg_id:'', ts:0, isImage:false }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // PUT — 发消息
     if (request.method === 'PUT') {
       const body = await request.json();
       const to = body.to;
       if (to) this.pendingMsg[to] = body;
+      // 更新活跃时间
+      if (body.from) await touchUser(this.env, body.from);
+      if (to) await touchUser(this.env, to);
       // 消息发给目标 bridge
       const targetBridge = this.bridges['D' + to];
       if (targetBridge && body.content) {
         try { targetBridge.send(JSON.stringify(body)); } catch {}
       }
+      // bridge 回复推给手机
+      if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(body)); } catch {}
       return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
     return new Response('Not found', { status: 404 });
@@ -108,26 +163,67 @@ export class ChatRoom {
 
   handleSession(ws, params) {
     ws.accept();
+    const role = params.get('role');
     const uid = params.get('uid');
 
-    // 只有 bridge 走 WebSocket
-    this.bridges['D' + (uid || '0')] = ws;
+    if (role === 'bridge') {
+      const bridgeKey = 'D' + (uid || '0');
+      this.bridges[bridgeKey] = ws;
+      if (uid) touchUser(this.env, uid);
+    } else if (uid) {
+      this.phones[uid] = ws;
+      touchUser(this.env, uid);
+      if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
+        try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
+      }
+    }
 
     ws.addEventListener('message', (e) => {
       try {
         const data = JSON.parse(e.data);
-        const to = data.to;
-        if (to) this.pendingMsg[to] = data;
+        if (role === 'bridge') {
+          const to = data.to;
+          if (to) this.pendingMsg[to] = data;
+          if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(data)); } catch {}
+        } else {
+          const to = data.to || '';
+          if (data.from) touchUser(this.env, data.from);
+          const targetBridge = this.bridges['D' + to];
+          if (targetBridge) {
+            try { targetBridge.send(JSON.stringify(data)); } catch {}
+          } else {
+            for (const bKey of Object.keys(this.bridges)) {
+              try { this.bridges[bKey].send(JSON.stringify(data)); } catch {}
+            }
+          }
+        }
       } catch {}
     });
 
     ws.addEventListener('close', () => {
-      delete this.bridges['D' + (uid || '0')];
+      if (role === 'bridge') { delete this.bridges['D' + (uid || '0')]; }
+      else if (uid) { delete this.phones[uid]; }
     });
     ws.addEventListener('error', () => {
-      delete this.bridges['D' + (uid || '0')];
+      if (role === 'bridge') { delete this.bridges['D' + (uid || '0')]; }
+      else if (uid) { delete this.phones[uid]; }
     });
   }
+}
+
+// 更新用户活跃时间
+async function touchUser(env, uid) {
+  if (!uid || uid.startsWith('D')) return;
+  try {
+    const raw = await env.ZZ_STORE.get(`user_${uid}`);
+    if (raw) {
+      const user = JSON.parse(raw);
+      if (!user.lastActive) {
+        user.lastActive = Date.now();
+        await env.ZZ_STORE.put(`user_${uid}`, JSON.stringify(user));
+      }
+    }
+  } catch {}
 }
 
 // ─── 入口 ─────────────────────────────────────────────
@@ -135,10 +231,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.includes('/register')) return handleRegister(request, env);
+    if (url.pathname.includes('/signal')) return handleSignaling(request, env);
+    if (url.pathname.includes('/friend')) return handleFriend(request, env);
+    if (url.pathname.includes('/chat')) return handleChat(request, env);
     const id = env.CHAT_ROOM.idFromName('openclaw');
     const room = env.CHAT_ROOM.get(id);
     return room.fetch(request);
   },
+  // Cron trigger：每天清理
   async scheduled(event, env) {
     const result = await handleCleanup(env);
     console.log(`[cleanup] checked=${result.checked} deleted=${result.deleted}`);
