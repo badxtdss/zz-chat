@@ -187,9 +187,20 @@ export class ChatRoom {
     } else if (uid) {
       this.phones[uid] = ws;
       touchUser(this.env, uid);
+      // OC 消息
       if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
         try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
       }
+      // 补发朋友离线消息
+      const pendingKey = `msg_${uid}`;
+      this.state.storage.get(pendingKey).then(stored => {
+        if (stored && stored.length) {
+          for (const msg of stored) {
+            try { ws.send(JSON.stringify(msg)); } catch {}
+          }
+          this.state.storage.delete(pendingKey);
+        }
+      }).catch(() => {});
     }
 
     ws.addEventListener('message', (e) => {
@@ -202,6 +213,27 @@ export class ChatRoom {
         } else {
           const to = data.to || '';
           if (data.from) touchUser(this.env, data.from);
+          if (to) touchUser(this.env, to);
+
+          // 朋友互聊：直发或存储
+          if (to && !to.startsWith('D')) {
+            if (this.phones[to]) {
+              // 对方在线，直接推
+              try { this.phones[to].send(JSON.stringify(data)); } catch {}
+            } else if (!data.isImage && data.content) {
+              // 对方不在线 + 文字消息 → 存 DO 持久存储
+              const pendingKey = `msg_${to}`;
+              this.state.storage.get(pendingKey).then(stored => {
+                const msgs = stored || [];
+                msgs.push({ from: data.from, content: data.content, ts: data.ts || Date.now(), msg_id: data.msg_id });
+                if (msgs.length > 100) msgs.splice(0, msgs.length - 100);
+                this.state.storage.put(pendingKey, msgs);
+              }).catch(() => {});
+            }
+            return; // 朋友消息不走 bridge
+          }
+
+          // OC 聊天：走 bridge
           const targetBridge = this.bridges['D' + to];
           if (targetBridge) {
             try { targetBridge.send(JSON.stringify(data)); } catch {}
