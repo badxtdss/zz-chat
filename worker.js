@@ -176,6 +176,38 @@ export class ChatRoom {
     this.pendingMsg = {};
   }
 
+  // 用户信息存 DO（SQLite，无写入限制）
+  async touchUserDO(uid) {
+    if (!uid || uid.startsWith('D')) return;
+    try {
+      const user = await this.state.storage.get(`user_${uid}`);
+      if (user && !user.lastActive) {
+        user.lastActive = Date.now();
+        await this.state.storage.put(`user_${uid}`, user);
+      }
+    } catch {}
+  }
+
+  // 清理 DO 里的过期用户
+  async cleanupDO() {
+    const now = Date.now();
+    let checked = 0, deleted = 0;
+    const list = await this.state.storage.list({ prefix: 'user_' });
+    for (const [key, user] of list) {
+      checked++;
+      const uid = key.replace('user_', '');
+      let shouldDelete = false;
+      if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true;
+      if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true;
+      if (shouldDelete) {
+        await this.state.storage.delete(key);
+        await this.state.storage.delete(`msg_${uid}`);
+        deleted++;
+      }
+    }
+    return { checked, deleted };
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
 
@@ -195,8 +227,9 @@ export class ChatRoom {
       }
       await this.state.storage.put('counter', nextId);
       const uid = String(nextId);
-      await this.env.ZZ_STORE.put(`user_${uid}`, JSON.stringify({ created: Date.now(), lastActive: 0 }));
-      // 如果传了 Worker URL，自动注册到中心
+      // 用户信息存 DO（SQLite，无写入限制）
+      await this.state.storage.put(`user_${uid}`, { created: Date.now(), lastActive: 0 });
+      // Worker URL 存 KV（跨分片可查）
       const workerUrl = url.searchParams.get('url');
       if (workerUrl) {
         await this.env.ZZ_STORE.put(`worker_url_${uid}`, workerUrl);
@@ -207,7 +240,9 @@ export class ChatRoom {
     // 清理端点
     if (url.pathname.includes('/cleanup')) {
       const result = await handleCleanup(this.env);
-      return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+      // 同时清理 DO 里的用户数据
+      const doResult = await this.cleanupDO();
+      return new Response(JSON.stringify({ ...result, doChecked: doResult.checked, doDeleted: doResult.deleted }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
     // 接收跨 Worker / 跨分片转发的消息
@@ -237,7 +272,7 @@ export class ChatRoom {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
     const uid = url.searchParams.get('uid');
-    if (uid) await touchUser(this.env, uid);
+    if (uid) await this.touchUserDO(uid);
 
     if (request.method === 'GET') {
       if (uid && this.pendingMsg[uid]) {
@@ -250,8 +285,8 @@ export class ChatRoom {
       const body = await request.json();
       const to = body.to;
       if (to && body.from && (body.from.startsWith('D') || body.from !== to)) this.pendingMsg[to] = body;
-      if (body.from) await touchUser(this.env, body.from);
-      if (to) await touchUser(this.env, to);
+      if (body.from) await this.touchUserDO(body.from);
+      if (to) await this.touchUserDO(to);
       const targetBridge = this.bridges['D' + to];
       if (targetBridge && body.content) {
         try { targetBridge.send(JSON.stringify(body)); } catch {}
@@ -270,10 +305,10 @@ export class ChatRoom {
     if (role === 'bridge') {
       const bridgeKey = 'D' + (uid || '0');
       this.bridges[bridgeKey] = ws;
-      if (uid) touchUser(this.env, uid);
+      if (uid) this.touchUserDO(uid);
     } else if (uid) {
       this.phones[uid] = ws;
-      touchUser(this.env, uid);
+      this.touchUserDO(uid);
       if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
         try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
       }
@@ -297,8 +332,8 @@ export class ChatRoom {
           if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(data)); } catch {}
         } else {
           const to = data.to || '';
-          if (data.from) touchUser(this.env, data.from);
-          if (to) touchUser(this.env, to);
+          if (data.from) this.touchUserDO(data.from);
+          if (to) this.touchUserDO(to);
 
           // 朋友互聊
           if (to && !to.startsWith('D') && data.from !== to) {
@@ -351,6 +386,7 @@ export class ChatRoom {
   }
 }
 
+// 保留全局版给 cleanup 用（如果还有 KV 里的旧数据）
 async function touchUser(env, uid) {
   if (!uid || uid.startsWith('D')) return;
   try {

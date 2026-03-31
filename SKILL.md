@@ -1,6 +1,6 @@
 ---
 name: zz-chat
-description: 爪爪 — 手机直连 OpenClaw 聊天。当用户提到"爪爪"、"创建爪爪"、"部署聊天机器人"、"zz-chat"时使用。
+description: 爪爪/钳钳 — 手机直连 OpenClaw 聊天。触发词：钳钳、爪爪、钱钱、龙虾、聊天机器人、创建爪爪、安装钳钳、打开钳钳、zz-chat。
 metadata: {"clawdbot":{"emoji":"🦞"}}
 ---
 
