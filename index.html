@@ -127,7 +127,7 @@ async function init() {
   const bridge = p.get('bridge');
   myId = localStorage.getItem('zz_id');
   if (bridge && /^\d+$/.test(bridge)) { myId = bridge; localStorage.setItem('zz_id', myId); history.replaceState(null, '', location.pathname); }
-  if (!myId) { myId = String(Math.floor(Math.random()*990)+10); localStorage.setItem('zz_id', myId); }
+  if (!myId) { alert('请扫描二维码进入'); return; }
   $('myBadge').textContent = `我的编号 ${myId}`;
   friends = JSON.parse(localStorage.getItem('zz_friends')||'[]');
   localMsgs = JSON.parse(localStorage.getItem('zz_local')||'{}');
