@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🦞 爪爪 — 手机直连 OpenClaw</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.container { max-width: 420px; padding: 24px; text-align: center; }
+.logo { font-size: 64px; margin-bottom: 12px; }
+h1 { font-size: 28px; margin-bottom: 8px; color: #fff; }
+.subtitle { color: #888; margin-bottom: 32px; font-size: 15px; }
+.cards { display: flex; flex-direction: column; gap: 12px; }
+.card { background: #1a1a1a; border: 1px solid #333; border-radius: 16px; padding: 20px; text-align: left; transition: border-color 0.2s; cursor: pointer; text-decoration: none; color: inherit; display: flex; align-items: center; gap: 16px; }
+.card:hover { border-color: #ff6b35; }
+.card-icon { font-size: 36px; flex-shrink: 0; }
+.card-body h3 { font-size: 16px; color: #fff; margin-bottom: 4px; }
+.card-body p { font-size: 13px; color: #888; }
+.card-action { margin-left: auto; color: #ff6b35; font-size: 13px; flex-shrink: 0; }
+.install-box { background: #111; border: 1px solid #333; border-radius: 12px; padding: 16px; margin-top: 20px; }
+.install-box code { font-size: 13px; color: #4ec9b0; word-break: break-all; display: block; text-align: left; }
+.install-label { font-size: 12px; color: #666; margin-bottom: 8px; }
+.copy-btn { background: #ff6b35; color: #fff; border: none; padding: 8px 20px; border-radius: 8px; margin-top: 12px; cursor: pointer; font-size: 14px; }
+.copy-btn:active { transform: scale(0.96); }
+.footer { margin-top: 32px; font-size: 12px; color: #555; }
+.divider { border: none; border-top: 1px solid #222; margin: 24px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo">🦞</div>
+  <h1>爪爪 zz-chat</h1>
+  <p class="subtitle">手机扫码即可和你的 OpenClaw AI 对话</p>
+
+  <div class="cards">
+    <!-- 夸克下载（扫码后显示） -->
+    <a class="card" id="quark-card" href="https://pan.quark.cn/s/903843e6d42d" target="_blank">
+      <div class="card-icon">📥</div>
+      <div class="card-body">
+        <h3>夸克网盘下载</h3>
+        <p>Mac / Windows 安装包</p>
+      </div>
+      <div class="card-action">下载 →</div>
+    </a>
+
+    <!-- 一键安装（Mac/Linux 终端） -->
+    <div class="card" onclick="copyInstall()">
+      <div class="card-icon">⚡</div>
+      <div class="card-body">
+        <h3>一键安装（Mac / Linux）</h3>
+        <p>复制命令，终端粘贴即可</p>
+      </div>
+      <div class="card-action">复制 →</div>
+    </div>
+
+    <!-- GitHub -->
+    <a class="card" href="https://github.com/badxtdss/zz-chat" target="_blank">
+      <div class="card-icon">💻</div>
+      <div class="card-body">
+        <h3>GitHub 源码</h3>
+        <p>badxtdss/zz-chat</p>
+      </div>
+      <div class="card-action">访问 →</div>
+    </a>
+
+    <!-- Gitee（国内镜像） -->
+    <a class="card" href="https://gitee.com/badxtd/zz-chat" target="_blank" id="gitee-card">
+      <div class="card-icon">🇨🇳</div>
+      <div class="card-body">
+        <h3>Gitee 国内镜像</h3>
+        <p>国内访问更快</p>
+      </div>
+      <div class="card-action">访问 →</div>
+    </a>
+
+    <!-- OpenClaw 安装 -->
+    <div class="card" onclick="copySkillInstall()">
+      <div class="card-icon">🤖</div>
+      <div class="card-body">
+        <h3>OpenClaw 安装</h3>
+        <p>在 OpenClaw 中直接安装 Skill</p>
+      </div>
+      <div class="card-action">复制 →</div>
+    </a>
+  </div>
+
+  <div class="install-box">
+    <div class="install-label">Mac / Linux 一键安装命令：</div>
+    <code id="install-cmd">curl -fsSL https://zz-chat.pages.dev/install.sh | bash</code>
+    <button class="copy-btn" onclick="copyInstall()">📋 复制命令</button>
+  </div>
+
+  <div class="install-box">
+    <div class="install-label">OpenClaw Skill 安装：</div>
+    <code id="skill-cmd">/skills install zz-chat</code>
+    <button class="copy-btn" onclick="copySkillInstall()">📋 复制命令</button>
+  </div>
+
+  <hr class="divider">
+  <div class="footer">
+    爪爪 by 秋风悠扬 · B站搜「秋风悠扬」
+  </div>
+</div>
+
+<script>
+function copyInstall() {
+  navigator.clipboard.writeText('curl -fsSL https://zz-chat.pages.dev/install.sh | bash').then(() => {
+    const btn = event.target;
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => btn.textContent = '📋 复制命令', 2000);
+  });
+}
+
+function copySkillInstall() {
+  navigator.clipboard.writeText('/skills install zz-chat').then(() => {
+    const btn = event.target;
+    btn.textContent = '✅ 已复制';
+    setTimeout(() => btn.textContent = '📋 复制命令', 2000);
+  });
+}
+</script>
+</body>
+</html>

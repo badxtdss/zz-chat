@@ -4,7 +4,7 @@ description: 爪爪/钳钳 — 手机直连 OpenClaw 聊天。触发词：钳钳
 metadata: {"clawdbot":{"emoji":"🦞"}}
 ---
 
-# 爪爪 🦞 — 手机直连 OpenClaw
+# 🦞 钳钳 — 手机直连 OpenClaw
 
 ## 架构
 
@@ -18,63 +18,70 @@ OC 聊天:  手机 ←WebSocket→ 用户的Worker ←→ bridge ←→ OpenClaw
 
 ## 执行流程（按顺序执行，每一步都做）
 
-用户说"部署爪爪"或类似指令时，按以下步骤自动执行：
+用户说"部署钳钳"或类似指令时，先检测操作系统，然后按对应平台的命令执行。
 
 ### 第一步：部署 Worker（用用户自己的 Cloudflare 账号）
 
-安装 wrangler（如果没装）：
+**先检测系统：**
+- macOS/Linux → 用 bash 命令
+- Windows → 用 PowerShell 命令
+
+#### macOS / Linux
 
 ```bash
+# 安装 wrangler
 export PATH="/usr/local/bin:$PATH"
 which wrangler 2>/dev/null || npm install -g wrangler 2>&1
-```
 
-检查登录状态，未登录则弹出浏览器让用户授权：
+# 检查登录（未登录会弹浏览器让用户点 Allow）
+wrangler auth whoami 2>&1 || wrangler login 2>&1
 
-```bash
-wrangler auth whoami 2>&1
-```
-
-如果显示"Not logged in"，执行登录（会自动弹浏览器，用户点同意即可）：
-
-```bash
-wrangler login 2>&1
-# 等用户在浏览器中点 "Allow" 授权
-```
-
-准备用户版 Worker 文件：
-
-```bash
+# 复制用户版文件
 cd ~/.openclaw/workspace/openchat/simple
-# 用用户版文件覆盖中心版
 cp worker-user.js worker-user-deploy.js
 cp wrangler-user.toml wrangler-user-deploy.toml
-```
 
-修改 `wrangler-user-deploy.toml` 中的 `name`，改成用户喜欢的名字（如 zz-chat-xxx）：
-
-```bash
+# 改 Worker 名字（可选，默认 zz-chat-用户名）
 sed -i '' "s/name = \"zz-proxy\"/name = \"zz-chat-$(whoami)\"/" wrangler-user-deploy.toml
-```
 
-部署：
-
-```bash
-cd ~/.openclaw/workspace/openchat/simple
-export PATH="/usr/local/bin:$PATH"
+# 部署
 wrangler deploy -c wrangler-user-deploy.toml 2>&1
-```
 
-记录 Worker URL：
-
-```bash
+# 记录 Worker URL
 WORKER_URL=$(wrangler deploy -c wrangler-user-deploy.toml 2>&1 | grep -o 'https://[^ ]*workers.dev' | head -1)
 mkdir -p ~/.zz
 echo "$WORKER_URL" > ~/.zz/worker_url
-echo "Worker URL: $WORKER_URL"
+```
+
+#### Windows (PowerShell)
+
+```powershell
+# 安装 wrangler
+npm install -g wrangler 2>&1
+
+# 检查登录（未登录会弹浏览器让用户点 Allow）
+wrangler auth whoami 2>&1; if ($LASTEXITCODE -ne 0) { wrangler login 2>&1 }
+
+# 复制用户版文件
+Set-Location ~\.openclaw\workspace\openchat\simple
+Copy-Item worker-user.js worker-user-deploy.js -Force
+Copy-Item wrangler-user.toml wrangler-user-deploy.toml -Force
+
+# 改 Worker 名字（可选，默认 zz-chat-计算机名）
+(Get-Content wrangler-user-deploy.toml) -replace 'name = "zz-proxy"', "name = `"zz-chat-$env:USERNAME`"" | Set-Content wrangler-user-deploy.toml
+
+# 部署
+wrangler deploy -c wrangler-user-deploy.toml 2>&1
+
+# 记录 Worker URL
+$WORKER_URL = (wrangler deploy -c wrangler-user-deploy.toml 2>&1 | Select-String 'https://\S+workers\.dev' | Select-Object -First 1).Matches.Value
+New-Item -ItemType Directory -Force -Path ~\.zz
+$WORKER_URL | Out-File ~\.zz\worker_url -Encoding ascii
 ```
 
 ### 第二步：注册获取全局 UID
+
+#### macOS / Linux
 
 ```bash
 WORKER_URL=$(cat ~/.zz/worker_url)
@@ -83,37 +90,34 @@ echo "$ZZ_ID" > ~/.zz/id
 echo "编号: $ZZ_ID"
 ```
 
-### 第三步：启动桥接 + 看门狗
+#### Windows (PowerShell)
 
-先杀掉旧进程：
-
-```bash
-pkill -f "bridge.py" 2>/dev/null
-pkill -f "watchdog.py" 2>/dev/null
-sleep 1
+```powershell
+$WORKER_URL = (Get-Content ~\.zz\worker_url -Raw).Trim()
+$resp = Invoke-WebRequest -Uri "$WORKER_URL/register" -UseBasicParsing
+$ZZ_ID = ($resp.Content | ConvertFrom-Json).id
+$ZZ_ID | Out-File ~\.zz\id -Encoding ascii
+Write-Host "编号: $ZZ_ID"
 ```
 
-复制桥接脚本：
+### 第三步：启动桥接
+
+#### macOS
+
+杀掉旧进程，启动 watchdog（自动拉起 bridge.py）：
 
 ```bash
+pkill -f "bridge.py" 2>/dev/null; pkill -f "watchdog.py" 2>/dev/null; sleep 1
 BRIDGE_DIR=~/.openclaw/workspace/openchat/bridge
 mkdir -p "$BRIDGE_DIR"
 cp ~/.openclaw/skills/zz-chat/bridge.py "$BRIDGE_DIR/"
 cp ~/.openclaw/skills/zz-chat/watchdog.py "$BRIDGE_DIR/"
-```
-
-启动看门狗（自动拉起 bridge）：
-
-```bash
-WORKER_URL=$(cat ~/.zz/worker_url)
-ZZ_ID=$(cat ~/.zz/id)
 nohup python3 -u "$BRIDGE_DIR/watchdog.py" >> "$BRIDGE_DIR/watchdog.log" 2>&1 &
 sleep 5
-# 检查是否启动成功
 ps aux | grep -E "(bridge|watchdog)" | grep -v grep
 ```
 
-或配置 launchd 开机自启（macOS）：
+或配置 launchd 开机自启：
 
 ```bash
 cat > ~/Library/LaunchAgents/com.zz-chat.bridge.plist << PLIST
@@ -146,22 +150,73 @@ sleep 5
 ps aux | grep -E "(bridge|watchdog)" | grep -v grep
 ```
 
+#### Windows
+
+用 Node.js 版桥接（不需要 Python）：
+
+```powershell
+# 安装 ws 依赖
+npm install -g ws 2>&1
+
+# 创建启动脚本
+Set-Location ~\.openclaw\workspace\openchat\bridge
+@"
+@echo off
+chcp 65001 >nul 2>&1
+title 钳钳桥接
+echo [启动] 钳钳桥接...
+:loop
+node bridge.js
+echo [重连] 5秒后重启...
+timeout /t 5 >nul
+goto loop
+"@ | Out-File start-bridge.bat -Encoding ascii
+
+# 启动
+start-bridge.bat
+```
+
+开机自启（创建快捷方式到启动文件夹）：
+
+```powershell
+# 按 Win+R 输入 shell:startup 打开启动文件夹
+# 把 start-bridge.bat 的快捷方式拖进去
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\钳钳桥接.lnk")
+$Shortcut.TargetPath = "~\.openclaw\workspace\openchat\bridge\start-bridge.bat"
+$Shortcut.WorkingDirectory = "~\.openclaw\workspace\openchat\bridge"
+$Shortcut.Save()
+Write-Host "已创建开机自启快捷方式"
+```
+
 ### 第四步：生成链接 + 发送二维码
 
-用 canvas 截图二维码发送给用户：
+#### macOS / Linux
 
-```
+```bash
 ZZ_ID=$(cat ~/.zz/id)
 WORKER_URL=$(cat ~/.zz/worker_url)
-PAGE_URL=https://badxtdss.github.io/zz-chat/?bridge=${ZZ_ID}&api=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WORKER_URL', safe=''))")
+PAGE_URL="https://badxtdss.github.io/zz-chat/?bridge=${ZZ_ID}&api=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WORKER_URL', safe=''))")"
 ```
 
-保存 HTML 到 `/tmp/zz-qr.html`：
+#### Windows (PowerShell)
+
+```powershell
+$ZZ_ID = (Get-Content ~\.zz\id -Raw).Trim()
+$WORKER_URL = (Get-Content ~\.zz\worker_url -Raw).Trim()
+$ENCODED = [System.Web.HttpUtility]::UrlEncode($WORKER_URL)
+$PAGE_URL = "https://badxtdss.github.io/zz-chat/?bridge=$ZZ_ID&api=$ENCODED"
+Write-Host "链接: $PAGE_URL"
+```
+
+**通用：** 用 canvas 截图二维码发给用户
+
+保存 HTML 到 `/tmp/zz-qr.html`（Mac）或 `%TEMP%\zz-qr.html`（Windows）：
 
 ```html
 <!DOCTYPE html>
 <html>
-<head><meta charset="UTF-8"><title>爪爪</title>
+<head><meta charset="UTF-8"><title>钳钳</title>
 <style>
 body{font-family:-apple-system,sans-serif;background:#0a0a0a;color:#e0e0e0;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0}
 h1{font-size:24px;margin-bottom:8px}
@@ -170,10 +225,10 @@ h1{font-size:24px;margin-bottom:8px}
 .hint{color:#8892b0;font-size:14px;text-align:center;max-width:300px;line-height:1.6}
 </style></head>
 <body>
-<h1>🦞 爪爪</h1>
+<h1>🦞 钳钳</h1>
 <div class="id">编号 {ZZ_ID}</div>
 <div class="qr" id="qrBox"></div>
-<div class="hint">手机扫码打开爪爪<br>消息通过你的 OpenClaw 处理</div>
+<div class="hint">手机扫码打开钳钳<br>消息通过你的 OpenClaw 处理</div>
 <script>
 const url = '{PAGE_URL}';
 const img = new Image();
@@ -185,10 +240,10 @@ document.getElementById('qrBox').appendChild(img);
 </html>
 ```
 
-用 canvas 工具截图（`action="present"` → `action="snapshot"`），然后发图 + 文字消息：
+用 canvas 截图后发图 + 文字消息：
 
 ```
-✅ 爪爪已部署完成！
+✅ 钳钳已部署完成！
 
 🦞 你的编号: {ZZ_ID}
 🔗 链接: {PAGE_URL}
@@ -212,37 +267,42 @@ document.getElementById('qrBox').appendChild(img);
 
 ## 文件说明
 
-| 文件 | 用途 |
-|------|------|
-| `worker.js` | 中心 Worker（ai0000.cn 用） |
-| `worker-user.js` | 用户独立 Worker |
-| `wrangler.toml` | 中心 Worker 配置 |
-| `wrangler-user.toml` | 用户 Worker 配置模板 |
-| `bridge.py` | 桥接脚本，支持 `--worker` 和 `--uid` |
-| `watchdog.py` | 看门狗，监控 bridge |
-| `index.html` | 手机端首页 |
-| `chat.html` | 手机端 OC 聊天页（WebSocket） |
-| `bridge.js` | Node.js 版桥接（Windows 兼容） |
-| `start-bridge.bat` | Windows 启动脚本 |
+| 文件 | 用途 | 平台 |
+|------|------|------|
+| `worker.js` | 中心 Worker（ai0000.cn 用） | Cloudflare |
+| `worker-user.js` | 用户独立 Worker | Cloudflare |
+| `wrangler.toml` | 中心 Worker 配置 | 通用 |
+| `wrangler-user.toml` | 用户 Worker 配置模板 | 通用 |
+| `bridge.py` | Python 桥接（`--worker`、`--uid`） | Mac/Linux |
+| `bridge.js` | Node.js 桥接（`--worker`、`--uid`） | 全平台（Windows 推荐） |
+| `watchdog.py` | 看门狗，监控 bridge | Mac/Linux |
+| `start-bridge.bat` | Windows 启动脚本 | Windows |
+| `index.html` | 手机端首页 | 浏览器 |
+| `chat.html` | 手机端 OC 聊天页 | 浏览器 |
 
 ## 桥接参数
 
+两个版本都支持：
+
 ```bash
-bridge.py --worker <URL>    # 指定 Worker 地址
-bridge.py --uid <ID>        # 直接指定编号
+# Python 版
+bridge.py --worker <URL> --uid <ID>
+
+# Node.js 版
+node bridge.js --worker <URL> --uid <ID>
 ```
 
-## 看门狗（watchdog.py）
+## 看门狗（仅 macOS/Linux）
 
 ```
-launchd → watchdog.py → bridge.py
-（系统级）  （进程级）    （实际桥接）
+launchd/systemd → watchdog.py → bridge.py
+（系统级）      （进程级）    （实际桥接）
 ```
 
 - 每 10 秒检查 bridge 进程是否存活
 - 每 30 秒 bridge 写心跳日志
 - 90 秒无活动 → 重启 bridge
-- 零服务器压力（本地检测）
+- Windows 用 start-bridge.bat 的循环替代
 
 ## 注意事项
 
@@ -251,12 +311,12 @@ launchd → watchdog.py → bridge.py
 - 每用户独立 Worker，免费额度：100 WebSocket 并发 + 10 万请求/天
 - 消息通过 `openclaw agent` CLI 处理
 - 注册后 1 小时未发消息自动清理，发过消息后 24 小时不活跃自动清理
-- watchdog 日志：`~/.openclaw/workspace/openchat/bridge/watchdog.log`
+- watchdog 日志：`~/.openclaw/workspace/openchat/bridge/watchdog.log`（仅 Mac/Linux）
 - bridge 日志：`~/.openclaw/workspace/openchat/bridge/bridge.log`
 
 ## 开发者
 
-🦞 爪爪 by 秋风悠扬
+🦞 钳钳 by 秋风悠扬
 
 - B站：[秋风悠扬的个人空间](https://b23.tv/rEEYnVF)
 - 抖音：363594031

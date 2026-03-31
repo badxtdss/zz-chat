@@ -6,97 +6,141 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const API = process.env.ZZ_API || 'https://ai0000.cn/zz/';
+// 读 Worker URL：环境变量 > ~/.zz/worker_url > 默认值
+let API = process.env.ZZ_API;
+const WORKER_FILE = path.join(os.homedir(), '.zz', 'worker_url');
+if (!API && fs.existsSync(WORKER_FILE)) {
+  API = fs.readFileSync(WORKER_FILE, 'utf8').trim().replace(/\/+$/, '') + '/';
+}
+// 支持 --worker 参数
+const workerIdx = process.argv.indexOf('--worker');
+if (workerIdx !== -1 && process.argv[workerIdx + 1]) {
+  API = process.argv[workerIdx + 1].replace(/\/+$/, '') + '/';
+}
+if (!API) API = 'https://ai0000.cn/zz/';
+
+// 支持 --uid 参数
+let uidOverride = null;
+const uidIdx = process.argv.indexOf('--uid');
+if (uidIdx !== -1 && process.argv[uidIdx + 1]) {
+  uidOverride = process.argv[uidIdx + 1];
+}
+
 const ID_FILE = path.join(os.homedir(), '.zz', 'id');
 
 // 读取或获取编号
 let MY_ID;
-try {
+if (uidOverride) {
+  MY_ID = uidOverride;
+  console.log(`[设置] 编号: ${MY_ID}`);
+} else if (fs.existsSync(ID_FILE)) {
   MY_ID = fs.readFileSync(ID_FILE, 'utf8').trim();
   console.log(`[加载] 编号: ${MY_ID}`);
-} catch {
-  // 没有本地编号，向服务器注册
+} else {
+  // 向服务器注册（用 https 模块，不依赖 curl）
   try {
-    const resp = execSync(`curl -s "${API}register"`, { encoding: 'utf8' });
-    MY_ID = JSON.parse(resp).id;
-    fs.mkdirSync(path.dirname(ID_FILE), { recursive: true });
-    fs.writeFileSync(ID_FILE, MY_ID);
-    console.log(`[注册成功] 编号: ${MY_ID}`);
+    const https = require('https');
+    const http = require('http');
+    const regUrl = new URL('register', API);
+    const mod = regUrl.protocol === 'https:' ? https : http;
+    const resp = mod.request(regUrl, { headers: { 'User-Agent': 'zz-bridge/15' } }, (res) => {
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try {
+          MY_ID = JSON.parse(data).id;
+          fs.mkdirSync(path.dirname(ID_FILE), { recursive: true });
+          fs.writeFileSync(ID_FILE, MY_ID);
+          console.log(`[注册成功] 编号: ${MY_ID}`);
+          start();
+        } catch (e) {
+          console.error(`[错误] 注册解析失败: ${e.message}`);
+          process.exit(1);
+        }
+      });
+    });
+    resp.on('error', (e) => { console.error(`[错误] 注册请求失败: ${e.message}`); process.exit(1); });
+    resp.end();
   } catch (e) {
     console.error(`[错误] 获取编号失败: ${e.message}`);
     process.exit(1);
   }
 }
 
-const BRIDGE_ID = 'D' + MY_ID;
-const SESSION_ID = 'zz-' + MY_ID;
-const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + `?role=bridge&uid=${MY_ID}`;
+function start() {
+  const BRIDGE_ID = 'D' + MY_ID;
+  const SESSION_ID = 'zz-' + MY_ID;
+  const WS_URL = API.replace('https://', 'wss://').replace('http://', 'ws://') + `?role=bridge&uid=${MY_ID}`;
 
-let lastProcessedId = '';
+  let lastProcessedId = '';
 
-function callOpenClaw(message) {
-  try {
-    const stdout = execSync(
-      `openclaw agent -m "${message.replace(/"/g, '\\"')}" --session-id ${SESSION_ID} --json --timeout 120`,
-      { encoding: 'utf8', timeout: 130000 }
-    );
-    const jsonStart = stdout.indexOf('{');
-    if (jsonStart < 0) return null;
-    const data = JSON.parse(stdout.slice(jsonStart));
-    const payloads = data?.result?.payloads;
-    if (payloads && payloads.length > 0) return payloads[0].text;
-    return null;
-  } catch (e) {
-    if (e.killed) console.log('[CLI 超时]');
-    else console.log(`[CLI 错误] ${e.message?.slice(0, 100)}`);
-    return null;
-  }
-}
-
-function handleMessage(data) {
-  const msgId = data.msg_id || '';
-  const to = data.to || '';
-  const content = data.content || '';
-
-  if (!content) return null;
-  if (msgId && msgId === lastProcessedId) return null;
-  if (to && to !== MY_ID && to !== BRIDGE_ID) return null;
-
-  lastProcessedId = msgId;
-  const sender = data.from || '';
-  console.log(`[收] #${sender}: ${content.slice(0, 80)}`);
-
-  const reply = callOpenClaw(content);
-  if (!reply) {
-    console.log('[跳过] CLI 无回复');
-    return null;
-  }
-
-  console.log(`[回] → #${sender}: ${reply.slice(0, 80)}`);
-  return {
-    msg_id: `reply-${msgId}`,
-    from: BRIDGE_ID,
-    to: sender,
-    content: reply,
-    ts: Date.now()
-  };
-}
-
-function connect() {
-  const ws = new WebSocket(WS_URL);
-  ws.on('open', () => console.log(`[已连接] ${WS_URL}`));
-  ws.on('close', () => { console.log('[断开] 5秒后重连...'); setTimeout(connect, 5000); });
-  ws.on('error', (e) => console.log(`[错误] ${e.message}`));
-  ws.on('message', (raw) => {
+  function callOpenClaw(message) {
     try {
-      const data = JSON.parse(raw);
-      const reply = handleMessage(data);
-      if (reply) ws.send(JSON.stringify(reply));
-    } catch {}
-  });
-}
+      // Windows 用引号转义，Mac/Linux 用反斜杠
+      const escaped = process.platform === 'win32'
+        ? message.replace(/"/g, '""')
+        : message.replace(/"/g, '\\"');
+      const cmd = process.platform === 'win32'
+        ? `openclaw agent -m "${escaped}" --session-id ${SESSION_ID} --json --timeout 120`
+        : `openclaw agent -m "${escaped}" --session-id ${SESSION_ID} --json --timeout 120`;
+      const stdout = execSync(cmd, { encoding: 'utf8', timeout: 130000 });
+      const jsonStart = stdout.indexOf('{');
+      if (jsonStart < 0) return null;
+      const data = JSON.parse(stdout.slice(jsonStart));
+      const payloads = data?.result?.payloads;
+      if (payloads && payloads.length > 0) return payloads[0].text;
+      return null;
+    } catch (e) {
+      if (e.killed) console.log('[CLI 超时]');
+      else console.log(`[CLI 错误] ${e.message?.slice(0, 100)}`);
+      return null;
+    }
+  }
 
-console.log(`
+  function handleMessage(data) {
+    const msgId = data.msg_id || '';
+    const to = data.to || '';
+    const content = data.content || '';
+
+    if (!content) return null;
+    if (msgId && msgId === lastProcessedId) return null;
+    if (to && to !== MY_ID && to !== BRIDGE_ID) return null;
+
+    lastProcessedId = msgId;
+    const sender = data.from || '';
+    console.log(`[收] #${sender}: ${content.slice(0, 80)}`);
+
+    const reply = callOpenClaw(content);
+    if (!reply) {
+      console.log('[跳过] CLI 无回复');
+      return null;
+    }
+
+    console.log(`[回] → #${sender}: ${reply.slice(0, 80)}`);
+    return {
+      msg_id: `reply-${msgId}`,
+      from: BRIDGE_ID,
+      to: sender,
+      content: reply,
+      ts: Date.now()
+    };
+  }
+
+  function connect() {
+    const ws = new WebSocket(WS_URL);
+    ws.on('open', () => console.log(`[已连接] ${WS_URL}`));
+    ws.on('close', () => { console.log('[断开] 5秒后重连...'); setTimeout(connect, 5000); });
+    ws.on('error', (e) => console.log(`[错误] ${e.message}`));
+    ws.on('message', (raw) => {
+      try {
+        const data = JSON.parse(raw);
+        const reply = handleMessage(data);
+        if (reply) ws.send(JSON.stringify(reply));
+      } catch {}
+    });
+  }
+
+  console.log(`
   ┌────────────────────────────────────────┐
   │  🦞 爪爪桥接 v15 (Node.js)            │
   │  编号: ${MY_ID.padEnd(10)} (bridge: ${BRIDGE_ID})  │
@@ -104,4 +148,10 @@ console.log(`
   └────────────────────────────────────────┘
 `);
 
-connect();
+  connect();
+}
+
+// 如果 MY_ID 已经读到了，直接启动
+if (MY_ID && !uidOverride && fs.existsSync(ID_FILE)) {
+  start();
+}
