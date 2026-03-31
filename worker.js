@@ -1,5 +1,5 @@
-// Cloudflare Worker — 爪爪 v7
-// 编号自增 + 自动清理 + 多 bridge 路由 + 好友请求 + 信令 + 聊天降级
+// Cloudflare Worker — 爪爪 v8
+// 编号自增 + 自动清理 + 多 bridge 路由 + 好友请求 + 信令 + 聊天降级 + 跨 Worker 朋友互聊
 // 部署: wrangler deploy
 
 const CORS = {
@@ -21,10 +21,33 @@ function getRoom(env, uid) {
 async function handleRegister(request, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'GET') return new Response('Method not allowed', { status: 405, headers: CORS });
-
+  const url = new URL(request.url);
+  const workerUrl = url.searchParams.get('url');
   const id = env.CHAT_ROOM.idFromName('shard-0');
   const room = env.CHAT_ROOM.get(id);
-  return room.fetch(new Request('https://internal/register', { method: 'GET' }));
+  const regReq = new Request('https://internal/register' + (workerUrl ? '?url=' + encodeURIComponent(workerUrl) : ''), { method: 'GET' });
+  return room.fetch(regReq);
+}
+
+// ─── 注册 Worker URL ──────────────────────────────────
+async function handleRegisterUrl(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  const workerUrl = url.searchParams.get('url');
+  if (!uid || !workerUrl) return new Response(JSON.stringify({ error: 'uid and url required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  await env.ZZ_STORE.put(`worker_url_${uid}`, workerUrl);
+  return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
+}
+
+// ─── 查找 Worker URL ──────────────────────────────────
+async function handleLookup(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const uid = url.searchParams.get('uid');
+  if (!uid) return new Response(JSON.stringify({ error: 'uid required' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  const workerUrl = await env.ZZ_STORE.get(`worker_url_${uid}`);
+  return new Response(JSON.stringify({ url: workerUrl || null }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
 }
 
 // ─── 好友请求 ─────────────────────────────────────────
@@ -87,13 +110,14 @@ async function handleCleanup(env) {
         const user = JSON.parse(await env.ZZ_STORE.get(key.name));
         const uid = key.name.replace('user_', '');
         let shouldDelete = false;
-        if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true; // 1h未发消息
-        if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true; // 24h不活跃
+        if (!user.lastActive && (now - user.created > HOUR)) shouldDelete = true;
+        if (user.lastActive && (now - user.lastActive > DAY)) shouldDelete = true;
         if (shouldDelete) {
           await env.ZZ_STORE.delete(key.name);
           await env.ZZ_STORE.delete(`friend_${uid}`);
           await env.ZZ_STORE.delete(`signal_${uid}`);
           await env.ZZ_STORE.delete(`chat_${uid}`);
+          await env.ZZ_STORE.delete(`worker_url_${uid}`);
           deleted++;
         }
       } catch {}
@@ -103,7 +127,19 @@ async function handleCleanup(env) {
   return { checked, deleted };
 }
 
-// ─── OpenClaw Durable Object ──────────────────────────
+// ─── 跨 Worker 转发 ───────────────────────────────────
+async function fwdToWorker(workerUrl, data) {
+  try {
+    const resp = await fetch(workerUrl + '/fwd', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    return resp.ok;
+  } catch { return false; }
+}
+
+// ─── Durable Object ───────────────────────────────────
 export class ChatRoom {
   constructor(state, env) {
     this.state = state;
@@ -122,31 +158,34 @@ export class ChatRoom {
       return new Response(JSON.stringify({ ok: true, counter: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // 注册端点（编号自增）
+    // 注册端点（编号自增 + 可选注册 Worker URL）
     if (url.pathname.includes('/register')) {
       const nextId = (await this.state.storage.get('counter') || 0) + 1;
       await this.state.storage.put('counter', nextId);
       const uid = String(nextId);
       await this.env.ZZ_STORE.put(`user_${uid}`, JSON.stringify({ created: Date.now(), lastActive: 0 }));
+      // 如果传了 Worker URL，自动注册到中心
+      const workerUrl = url.searchParams.get('url');
+      if (workerUrl) {
+        await this.env.ZZ_STORE.put(`worker_url_${uid}`, workerUrl);
+      }
       return new Response(JSON.stringify({ id: uid }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // 清理端点（cron 调用）
+    // 清理端点
     if (url.pathname.includes('/cleanup')) {
       const result = await handleCleanup(this.env);
       return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
-    // 内部转发（跨分片朋友互聊）
+    // 接收跨 Worker / 跨分片转发的消息
     if (url.pathname.includes('/fwd') && request.method === 'PUT') {
       const data = await request.json();
       const to = data.to;
       if (to) {
-        // 推给在线手机
         if (this.phones[to]) {
           try { this.phones[to].send(JSON.stringify(data)); } catch {}
         } else if (!data.isImage && data.content) {
-          // 离线文字存持久存储
           const pendingKey = `msg_${to}`;
           const stored = await this.state.storage.get(pendingKey).catch(() => null);
           const msgs = stored || [];
@@ -165,7 +204,6 @@ export class ChatRoom {
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    // 更新活跃时间
     const uid = url.searchParams.get('uid');
     if (uid) await touchUser(this.env, uid);
 
@@ -179,17 +217,13 @@ export class ChatRoom {
     if (request.method === 'PUT') {
       const body = await request.json();
       const to = body.to;
-      // 存 bridge 回复 + 用户间消息，不存手机自己的回显
       if (to && body.from && (body.from.startsWith('D') || body.from !== to)) this.pendingMsg[to] = body;
-      // 更新活跃时间
       if (body.from) await touchUser(this.env, body.from);
       if (to) await touchUser(this.env, to);
-      // 消息发给目标 bridge
       const targetBridge = this.bridges['D' + to];
       if (targetBridge && body.content) {
         try { targetBridge.send(JSON.stringify(body)); } catch {}
       }
-      // bridge 回复推给手机
       if (to && this.phones[to]) try { this.phones[to].send(JSON.stringify(body)); } catch {}
       return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
@@ -208,11 +242,9 @@ export class ChatRoom {
     } else if (uid) {
       this.phones[uid] = ws;
       touchUser(this.env, uid);
-      // OC 消息
       if (this.pendingMsg[uid] && this.pendingMsg[uid].content) {
         try { ws.send(JSON.stringify(this.pendingMsg[uid])); } catch {}
       }
-      // 补发朋友离线消息
       const pendingKey = `msg_${uid}`;
       this.state.storage.get(pendingKey).then(stored => {
         if (stored && stored.length) {
@@ -236,32 +268,29 @@ export class ChatRoom {
           if (data.from) touchUser(this.env, data.from);
           if (to) touchUser(this.env, to);
 
-          // 朋友互聊：路由到接收方的分片 DO
-          if (to && !to.startsWith('D')) {
-            const targetShard = getShard(to);
-            const myShard = getShard(uid || '0');
-            if (targetShard !== myShard) {
-              // 跨分片：转发到接收方的 DO
+          // 朋友互聊
+          if (to && !to.startsWith('D') && data.from !== to) {
+            // 同 Worker 同分片：本地处理
+            if (getShard(to) === getShard(uid || '0')) {
+              if (this.phones[to]) {
+                try { this.phones[to].send(JSON.stringify(data)); } catch {}
+              } else if (!data.isImage && data.content) {
+                const pendingKey = `msg_${to}`;
+                this.state.storage.get(pendingKey).then(stored => {
+                  const msgs = stored || [];
+                  msgs.push({ from: data.from, content: data.content, ts: data.ts || Date.now(), msg_id: data.msg_id });
+                  if (msgs.length > 100) msgs.splice(0, msgs.length - 100);
+                  this.state.storage.put(pendingKey, msgs);
+                }).catch(() => {});
+              }
+            } else {
+              // 同 Worker 跨分片
               const targetRoom = getRoom(this.env, to);
-              const fwdReq = new Request('https://internal/fwd', {
+              targetRoom.fetch(new Request('https://internal/fwd', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data),
-              });
-              targetRoom.fetch(fwdReq).catch(() => {});
-              return;
-            }
-            // 同分片：本地处理
-            if (this.phones[to]) {
-              try { this.phones[to].send(JSON.stringify(data)); } catch {}
-            } else if (!data.isImage && data.content) {
-              const pendingKey = `msg_${to}`;
-              this.state.storage.get(pendingKey).then(stored => {
-                const msgs = stored || [];
-                msgs.push({ from: data.from, content: data.content, ts: data.ts || Date.now(), msg_id: data.msg_id });
-                if (msgs.length > 100) msgs.splice(0, msgs.length - 100);
-                this.state.storage.put(pendingKey, msgs);
-              }).catch(() => {});
+              })).catch(() => {});
             }
             return;
           }
@@ -290,7 +319,6 @@ export class ChatRoom {
   }
 }
 
-// 更新用户活跃时间
 async function touchUser(env, uid) {
   if (!uid || uid.startsWith('D')) return;
   try {
@@ -310,6 +338,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.includes('/register')) return handleRegister(request, env);
+    if (url.pathname.includes('/register_url')) return handleRegisterUrl(request, env);
+    if (url.pathname.includes('/lookup')) return handleLookup(request, env);
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
     if (url.pathname.includes('/chat')) return handleChat(request, env);
@@ -319,7 +349,6 @@ export default {
     const room = getRoom(env, uid || '0');
     return room.fetch(request);
   },
-  // Cron trigger：每天清理
   async scheduled(event, env) {
     const result = await handleCleanup(env);
     console.log(`[cleanup] checked=${result.checked} deleted=${result.deleted}`);
