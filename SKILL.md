@@ -22,10 +22,24 @@ OC 聊天:  手机 ←WebSocket→ 用户的Worker ←→ bridge ←→ OpenClaw
 
 ### 第一步：部署 Worker（用用户自己的 Cloudflare 账号）
 
-确保 wrangler 已登录用户的 Cloudflare 账号：
+安装 wrangler（如果没装）：
 
 ```bash
-wrangler auth whoami 2>&1 || wrangler login
+export PATH="/usr/local/bin:$PATH"
+which wrangler 2>/dev/null || npm install -g wrangler 2>&1
+```
+
+检查登录状态，未登录则弹出浏览器让用户授权：
+
+```bash
+wrangler auth whoami 2>&1
+```
+
+如果显示"Not logged in"，执行登录（会自动弹浏览器，用户点同意即可）：
+
+```bash
+wrangler login 2>&1
+# 等用户在浏览器中点 "Allow" 授权
 ```
 
 准备用户版 Worker 文件：
