@@ -102,6 +102,8 @@ Write-Host "编号: $ZZ_ID"
 
 ### 第三步：启动桥接
 
+**先确认 `~/.zz/worker_url` 已写入，否则 bridge 会连到中心服务器。**
+
 #### macOS
 
 杀掉旧进程，启动 watchdog（自动拉起 bridge.py）：
@@ -114,7 +116,8 @@ cp ~/.openclaw/skills/zz-chat/bridge.py "$BRIDGE_DIR/"
 cp ~/.openclaw/skills/zz-chat/watchdog.py "$BRIDGE_DIR/"
 nohup python3 -u "$BRIDGE_DIR/watchdog.py" >> "$BRIDGE_DIR/watchdog.log" 2>&1 &
 sleep 5
-ps aux | grep -E "(bridge|watchdog)" | grep -v grep
+# 确认 bridge 连到了自己的 Worker（不是中心 Worker）
+grep "已连接" "$BRIDGE_DIR/bridge.log" | tail -1
 ```
 
 或配置 launchd 开机自启：
@@ -152,6 +155,8 @@ ps aux | grep -E "(bridge|watchdog)" | grep -v grep
 
 #### Windows
 
+**先确认 `~\.zz\worker_url` 已写入，否则 bridge 会连到中心服务器。**
+
 用 Node.js 版桥接（不需要 Python）：
 
 ```powershell
@@ -174,6 +179,10 @@ goto loop
 
 # 启动
 start-bridge.bat
+
+# 确认 bridge 连到了自己的 Worker（看窗口输出）
+# 应显示 [已连接] wss://你的Worker地址/?role=bridge&uid=xxx
+# 不应显示 [已连接] wss://ai0000.cn/zz/?role=bridge&uid=xxx
 ```
 
 开机自启（创建快捷方式到启动文件夹）：
