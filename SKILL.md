@@ -16,26 +16,46 @@ OC 聊天:  手机 ←WebSocket→ 用户的Worker ←→ bridge ←→ OpenClaw
 
 每个用户独立部署 Worker，用自己 Cloudflare 额度，互不影响。
 
-## 执行流程
+## 执行流程（按顺序执行，每一步都做）
 
-### 第一步：部署用户自己的 Worker
+用户说"部署爪爪"或类似指令时，按以下步骤自动执行：
+
+### 第一步：部署 Worker（用用户自己的 Cloudflare 账号）
+
+确保 wrangler 已登录用户的 Cloudflare 账号：
+
+```bash
+wrangler auth whoami 2>&1 || wrangler login
+```
+
+准备用户版 Worker 文件：
 
 ```bash
 cd ~/.openclaw/workspace/openchat/simple
-
-# 复制用户版文件
-cp worker-user.js worker.js
-cp wrangler-user.toml wrangler.toml
-
-# 部署（需要 wrangler 已登录）
-export PATH="/usr/local/bin:$PATH"
-wrangler deploy 2>&1
+# 用用户版文件覆盖中心版
+cp worker-user.js worker-user-deploy.js
+cp wrangler-user.toml wrangler-user-deploy.toml
 ```
 
-记录 Worker 域名：
+修改 `wrangler-user-deploy.toml` 中的 `name`，改成用户喜欢的名字（如 zz-chat-xxx）：
 
 ```bash
-WORKER_URL=$(wrangler deploy 2>&1 | grep -o 'https://[^ ]*workers.dev' | head -1)
+sed -i '' "s/name = \"zz-proxy\"/name = \"zz-chat-$(whoami)\"/" wrangler-user-deploy.toml
+```
+
+部署：
+
+```bash
+cd ~/.openclaw/workspace/openchat/simple
+export PATH="/usr/local/bin:$PATH"
+wrangler deploy -c wrangler-user-deploy.toml 2>&1
+```
+
+记录 Worker URL：
+
+```bash
+WORKER_URL=$(wrangler deploy -c wrangler-user-deploy.toml 2>&1 | grep -o 'https://[^ ]*workers.dev' | head -1)
+mkdir -p ~/.zz
 echo "$WORKER_URL" > ~/.zz/worker_url
 echo "Worker URL: $WORKER_URL"
 ```
@@ -44,31 +64,45 @@ echo "Worker URL: $WORKER_URL"
 
 ```bash
 WORKER_URL=$(cat ~/.zz/worker_url)
-# 向自己的 Worker 注册（自动调中心 Worker 获取全局 UID）
-curl -s "$WORKER_URL/register" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" > ~/.zz/id
-ZZ_ID=$(cat ~/.zz/id)
+ZZ_ID=$(curl -s "$WORKER_URL/register" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+echo "$ZZ_ID" > ~/.zz/id
 echo "编号: $ZZ_ID"
 ```
 
-### 第三步：部署桥接 + 看门狗
+### 第三步：启动桥接 + 看门狗
+
+先杀掉旧进程：
 
 ```bash
-pkill -f "bridge.py" 2>/dev/null; pkill -f "watchdog.py" 2>/dev/null; sleep 1
+pkill -f "bridge.py" 2>/dev/null
+pkill -f "watchdog.py" 2>/dev/null
+sleep 1
+```
 
+复制桥接脚本：
+
+```bash
 BRIDGE_DIR=~/.openclaw/workspace/openchat/bridge
 mkdir -p "$BRIDGE_DIR"
 cp ~/.openclaw/skills/zz-chat/bridge.py "$BRIDGE_DIR/"
 cp ~/.openclaw/skills/zz-chat/watchdog.py "$BRIDGE_DIR/"
+```
 
+启动看门狗（自动拉起 bridge）：
+
+```bash
 WORKER_URL=$(cat ~/.zz/worker_url)
+ZZ_ID=$(cat ~/.zz/id)
 nohup python3 -u "$BRIDGE_DIR/watchdog.py" >> "$BRIDGE_DIR/watchdog.log" 2>&1 &
 sleep 5
+# 检查是否启动成功
+ps aux | grep -E "(bridge|watchdog)" | grep -v grep
 ```
 
 或配置 launchd 开机自启（macOS）：
 
 ```bash
-cat > ~/Library/LaunchAgents/com.zz-chat.bridge.plist << 'PLIST'
+cat > ~/Library/LaunchAgents/com.zz-chat.bridge.plist << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -77,36 +111,38 @@ cat > ~/Library/LaunchAgents/com.zz-chat.bridge.plist << 'PLIST'
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/python3</string><string>-u</string>
-        <string>/Users/USERNAME/.openclaw/workspace/openchat/bridge/watchdog.py</string>
+        <string>/Users/$(whoami)/.openclaw/workspace/openchat/bridge/watchdog.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key><string>/Users/USERNAME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PATH</key><string>/Users/$(whoami)/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>all_proxy</key><string></string><key>ALL_PROXY</key><string></string>
         <key>http_proxy</key><string></string><key>HTTP_PROXY</key><string></string>
         <key>https_proxy</key><string></string><key>HTTPS_PROXY</key><string></string>
     </dict>
     <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/Users/USERNAME/.openclaw/workspace/openchat/bridge/watchdog.log</string>
-    <key>StandardErrorPath</key><string>/Users/USERNAME/.openclaw/workspace/openchat/bridge/watchdog.log</string>
-    <key>WorkingDirectory</key><string>/Users/USERNAME/.openclaw/workspace/openchat/bridge</string>
+    <key>StandardOutPath</key><string>/Users/$(whoami)/.openclaw/workspace/openchat/bridge/watchdog.log</string>
+    <key>StandardErrorPath</key><string>/Users/$(whoami)/.openclaw/workspace/openchat/bridge/watchdog.log</string>
+    <key>WorkingDirectory</key><string>/Users/$(whoami)/.openclaw/workspace/openchat/bridge</string>
 </dict>
 </plist>
 PLIST
-sed -i '' "s/USERNAME/$(whoami)/g" ~/Library/LaunchAgents/com.zz-chat.bridge.plist
 launchctl load ~/Library/LaunchAgents/com.zz-chat.bridge.plist
+sleep 5
+ps aux | grep -E "(bridge|watchdog)" | grep -v grep
 ```
 
-### 第四步：打开首页 + 发送链接 + 截图二维码
+### 第四步：生成链接 + 发送二维码
 
-```bash
+用 canvas 截图二维码发送给用户：
+
+```
 ZZ_ID=$(cat ~/.zz/id)
 WORKER_URL=$(cat ~/.zz/worker_url)
-PAGE_URL="https://badxtdss.github.io/zz-chat/?bridge=${ZZ_ID}&api=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WORKER_URL', safe=''))")"
-open "$PAGE_URL"
+PAGE_URL=https://badxtdss.github.io/zz-chat/?bridge=${ZZ_ID}&api=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$WORKER_URL', safe=''))")
 ```
 
-生成二维码 HTML（保存到 `/tmp/zz-qr.html`）并用 canvas 截图发送：
+保存 HTML 到 `/tmp/zz-qr.html`：
 
 ```html
 <!DOCTYPE html>
@@ -135,14 +171,13 @@ document.getElementById('qrBox').appendChild(img);
 </html>
 ```
 
-发送文字消息到 webchat：
+用 canvas 工具截图（`action="present"` → `action="snapshot"`），然后发图 + 文字消息：
 
 ```
 ✅ 爪爪已部署完成！
 
 🦞 你的编号: {ZZ_ID}
 🔗 链接: {PAGE_URL}
-📱 手机扫码或点击链接即可聊天
 
 📱 添加到桌面（必做）:
 1. 打开后点浏览器菜单 → 「访问电脑版」
@@ -151,18 +186,6 @@ document.getElementById('qrBox').appendChild(img);
    Safari: 分享按钮 → 「添加到主屏幕」
 3. 以后从桌面图标打开，体验最佳
 ```
-
-## 看门狗（watchdog.py）
-
-```
-launchd → watchdog.py → bridge.py
-（系统级）  （进程级）    （实际桥接）
-```
-
-- 每 10 秒检查 bridge 进程是否存活
-- 每 30 秒 bridge 写心跳日志
-- 90 秒无活动 → 重启 bridge
-- 零服务器压力（本地检测）
 
 ## 消息路由
 
@@ -194,6 +217,18 @@ launchd → watchdog.py → bridge.py
 bridge.py --worker <URL>    # 指定 Worker 地址
 bridge.py --uid <ID>        # 直接指定编号
 ```
+
+## 看门狗（watchdog.py）
+
+```
+launchd → watchdog.py → bridge.py
+（系统级）  （进程级）    （实际桥接）
+```
+
+- 每 10 秒检查 bridge 进程是否存活
+- 每 30 秒 bridge 写心跳日志
+- 90 秒无活动 → 重启 bridge
+- 零服务器压力（本地检测）
 
 ## 注意事项
 

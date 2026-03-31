@@ -337,8 +337,8 @@ async function touchUser(env, uid) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname.includes('/register')) return handleRegister(request, env);
     if (url.pathname.includes('/register_url')) return handleRegisterUrl(request, env);
+    if (url.pathname.includes('/register')) return handleRegister(request, env);
     if (url.pathname.includes('/lookup')) return handleLookup(request, env);
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
