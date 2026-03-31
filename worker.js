@@ -95,6 +95,33 @@ async function handleChat(request, env) {
   return new Response('Method not allowed', { status: 405, headers: CORS });
 }
 
+// ─── 数据备份 ─────────────────────────────────────────
+async function handleBackup(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(request.url);
+  const secret = url.searchParams.get('key');
+  if (!secret || secret !== env.BACKUP_KEY) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  }
+  const result = {};
+  let cursor;
+  let listed;
+  // 导出所有 KV
+  do {
+    listed = await env.ZZ_STORE.list({ cursor });
+    for (const key of listed.keys) {
+      try {
+        const val = await env.ZZ_STORE.get(key.name);
+        if (val !== null) result[key.name] = val;
+      } catch {}
+    }
+    cursor = listed.cursor;
+  } while (!listed.list_complete);
+  return new Response(JSON.stringify({ ts: Date.now(), count: Object.keys(result).length, data: result }), {
+    headers: { ...CORS, 'Content-Type': 'application/json' },
+  });
+}
+
 // ─── 清理（每天跑一次）────────────────────────────────
 async function handleCleanup(env) {
   const now = Date.now();
@@ -340,6 +367,7 @@ export default {
     if (url.pathname.includes('/register_url')) return handleRegisterUrl(request, env);
     if (url.pathname.includes('/register')) return handleRegister(request, env);
     if (url.pathname.includes('/lookup')) return handleLookup(request, env);
+    if (url.pathname.includes('/backup')) return handleBackup(request, env);
     if (url.pathname.includes('/signal')) return handleSignaling(request, env);
     if (url.pathname.includes('/friend')) return handleFriend(request, env);
     if (url.pathname.includes('/chat')) return handleChat(request, env);
