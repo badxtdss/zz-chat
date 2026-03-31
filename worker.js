@@ -187,7 +187,12 @@ export class ChatRoom {
 
     // 注册端点（编号自增 + 可选注册 Worker URL）
     if (url.pathname.includes('/register')) {
-      const nextId = (await this.state.storage.get('counter') || 0) + 1;
+      let counter = (await this.state.storage.get('counter')) || 0;
+      if (counter < 1888) counter = 1888; // 起始编号
+      const nextId = counter + 1;
+      if (nextId > 9998) {
+        return new Response(JSON.stringify({ error: '注册已满', code: 'FULL' }), { status: 403, headers: { ...CORS, 'Content-Type': 'application/json' } });
+      }
       await this.state.storage.put('counter', nextId);
       const uid = String(nextId);
       await this.env.ZZ_STORE.put(`user_${uid}`, JSON.stringify({ created: Date.now(), lastActive: 0 }));
