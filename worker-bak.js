@@ -177,7 +177,6 @@ export class ChatRoom {
   }
 
   async fetch(request) {
-    try {
     const url = new URL(request.url);
 
     // 重置编号计数器
@@ -196,9 +195,8 @@ export class ChatRoom {
       }
       await this.state.storage.put('counter', nextId);
       const uid = String(nextId);
-      // 用户信息存 DO（SQLite，无写入限制）
-      await this.state.storage.put(`user_${uid}`, { created: Date.now(), lastActive: 0 });
-      // Worker URL 存 KV（跨分片可查）
+      await this.env.ZZ_STORE.put(`user_${uid}`, JSON.stringify({ created: Date.now(), lastActive: 0 }));
+      // 如果传了 Worker URL，自动注册到中心
       const workerUrl = url.searchParams.get('url');
       if (workerUrl) {
         await this.env.ZZ_STORE.put(`worker_url_${uid}`, workerUrl);
@@ -209,7 +207,6 @@ export class ChatRoom {
     // 清理端点
     if (url.pathname.includes('/cleanup')) {
       const result = await handleCleanup(this.env);
-      // 同时清理 DO 里的用户数据
       return new Response(JSON.stringify(result), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
 
@@ -263,9 +260,6 @@ export class ChatRoom {
       return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } });
     }
     return new Response('Not found', { status: 404 });
-    } catch (e) {
-      return new Response(JSON.stringify({ error: e.message, stack: e.stack }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } });
-    }
   }
 
   handleSession(ws, params) {
@@ -357,7 +351,6 @@ export class ChatRoom {
   }
 }
 
-// 保留全局版给 cleanup 用（如果还有 KV 里的旧数据）
 async function touchUser(env, uid) {
   if (!uid || uid.startsWith('D')) return;
   try {
